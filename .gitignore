@@ -1,0 +1,40 @@
+# Node
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.npm/
+.eslintcache
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+auth.json
+pairing.json
+
+# Logs
+*.log
+logs/
+
+# macOS
+.DS_Store
+
+# Xcode / Swift
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+*.xcworkspace/xcuserdata/
+.swiftpm/
+
+# Cloudflare tunnel creds
+*.cloudflared.json
+cert.pem
+
+# Local runtime state
+state/
+sessions/

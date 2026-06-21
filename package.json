@@ -1,0 +1,20 @@
+{
+  "name": "pinch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claude Code on your wrist — drive a full agentic coding session from an Apple Watch Ultra over cellular.",
+  "workspaces": [
+    "packages/protocol",
+    "backend",
+    "simulator"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace backend",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "sim": "npm run dev --workspace simulator"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
