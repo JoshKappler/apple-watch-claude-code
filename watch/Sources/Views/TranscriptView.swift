@@ -33,11 +33,23 @@ struct TranscriptView: View {
                         ThinkingIndicator(agent: store.agentState, startedAt: store.turnStartedAt)
                             .id("thinking")
                     }
+                    // Zero-height tail anchor. Auto-scroll targets THIS (anchor: .bottom) instead of
+                    // the last bubble's id: a short last item (a one-line notice/tool chip) scrolled
+                    // with anchor:.bottom can leave the content's true end above the viewport floor,
+                    // which reads as scrollable emptiness. Anchoring to a fixed tail at the very end
+                    // pins the real bottom of the content to the viewport bottom every time.
+                    Color.clear.frame(height: 1).id("BOTTOM")
                 }
                 .padding(.horizontal, 6)
                 .padding(.top, 4)
                 .padding(.bottom, 6)
             }
+            // Stop the crown from flinging past the last message into a screenful of empty space:
+            // with .basedOnSize the ScrollView only bounces/overscrolls when the content is actually
+            // taller than the viewport, and never past the content's end. (watchOS 9.4+.) This does
+            // NOT touch focus or gestures, so the crown still scrolls and the swipe-catcher still
+            // collapses chrome.
+            .scrollBounceBehavior(.basedOnSize)
             // No .focusable / .focused here. On watchOS a ScrollView scrolls with the crown BY
             // DEFAULT whenever nothing else holds crown focus. The expanded input is the ONLY
             // view that takes focus (and the crown); when it isn't focused, the crown falls back
@@ -46,15 +58,15 @@ struct TranscriptView: View {
                 scrollToBottom(proxy)
             }
             .onChange(of: isWorking) { _, active in
-                if active { withAnimation { proxy.scrollTo("thinking", anchor: .bottom) } }
+                if active { withAnimation { proxy.scrollTo("BOTTOM", anchor: .bottom) } }
             }
         }
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
-        guard let last = store.transcript.last else { return }
+        guard !store.transcript.isEmpty else { return }
         withAnimation(.easeOut(duration: 0.2)) {
-            proxy.scrollTo(last.id, anchor: .bottom)
+            proxy.scrollTo("BOTTOM", anchor: .bottom)
         }
     }
 
