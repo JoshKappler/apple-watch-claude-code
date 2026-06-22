@@ -41,25 +41,31 @@ struct CrownConfirm: View {
 
     var body: some View {
         ZStack {
-            // Directional fill: red grows left as you turn toward deny, green right toward approve.
-            HStack(spacing: 0) {
-                Rectangle().fill(Color.red.opacity(value < 0 ? min(-value, 1) * 0.5 : 0))
+            // Directional fill matches the up/down hint: GREEN grows from the top as you turn the
+            // crown UP toward approve, RED grows from the bottom as you turn DOWN toward deny.
+            VStack(spacing: 0) {
                 Rectangle().fill(Color.green.opacity(value > 0 ? min(value, 1) * 0.5 : 0))
+                Rectangle().fill(Color.red.opacity(value < 0 ? min(-value, 1) * 0.5 : 0))
             }
             .allowsHitTesting(false)
 
-            VStack(spacing: 3) {
+            // Crown UP = approve, crown DOWN = deny — shown with literal up/down arrows so the
+            // direction you turn maps to the direction of the label (the crown scrolls vertically).
+            VStack(spacing: 2) {
+                Label(approveTitle, systemImage: "arrow.up")
+                    .font(.system(size: 12, weight: value > 0.05 ? .semibold : .regular))
+                    .foregroundStyle(value > 0.05 ? .green : .secondary)
                 Image(systemName: glyph)
-                    .font(.system(size: 22, weight: .semibold))
+                    .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(value > 0.05 ? .green : value < -0.05 ? .red : .secondary)
-                Text(label)
-                    .font(.system(size: 11, weight: .medium))
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
+                Label(denyTitle, systemImage: "arrow.down")
+                    .font(.system(size: 12, weight: value < -0.05 ? .semibold : .regular))
+                    .foregroundStyle(value < -0.05 ? .red : .secondary)
             }
+            .labelStyle(.titleAndIcon)
             .padding(.horizontal, 8)
         }
-        .frame(maxWidth: .infinity, minHeight: 56)
+        .frame(maxWidth: .infinity, minHeight: 70)
         .focusable(true)
         .focused($focused)
         .digitalCrownRotation(
@@ -78,19 +84,13 @@ struct CrownConfirm: View {
         }
         .onAppear { focused = true }
         .accessibilityElement()
-        .accessibilityLabel("Turn crown right to \(approveTitle), left to \(denyTitle)")
+        .accessibilityLabel("Turn crown up to \(approveTitle), down to \(denyTitle)")
     }
 
     private var glyph: String {
         if value > 0.05 { return "checkmark.circle.fill" }
         if value < -0.05 { return "xmark.circle.fill" }
         return "dial.medium.fill"
-    }
-
-    private var label: String {
-        if value > 0.05 { return "\(approveTitle) →" }
-        if value < -0.05 { return "← \(denyTitle)" }
-        return "turn → \(approveTitle) · ← \(denyTitle)"
     }
 
     private func commit(approve: Bool) {

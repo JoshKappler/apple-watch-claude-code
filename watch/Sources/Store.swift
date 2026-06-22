@@ -295,6 +295,10 @@ final class PinchStore: ObservableObject {
         transcript.append(.user(text: trimmed))
         draft = ""
         caretIndex = 0
+        // If we sent from the EXPANDED input (the draft box filling the screen), collapse it
+        // back to one line so the transcript reclaims the screen and the reply is immediately
+        // visible — you're done composing the moment you send.
+        inputOwnsCrown = false
         if case .ready = connection {
             ws?.send(.prompt(text: trimmed))
         } else {

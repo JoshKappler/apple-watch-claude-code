@@ -48,7 +48,6 @@ struct InlineDraftEditor: View {
     let mode: InlineEditMode
 
     @State private var caretValue = 0.0
-    @State private var scrollValue = 0.0
     @FocusState private var focused: Bool
 
     private var isEmpty: Bool { text.isEmpty }
@@ -73,7 +72,6 @@ struct InlineDraftEditor: View {
             if owns {
                 caretIndex = clampedCaret(caretIndex)
                 caretValue = Double(caretIndex)
-                scrollValue = 0
                 Task { @MainActor in focused = true }
             } else {
                 focused = false
@@ -98,8 +96,21 @@ struct InlineDraftEditor: View {
             .foregroundStyle(isEmpty ? .secondary : .primary)
     }
 
-    // MARK: Expanded — owns the crown. EDIT shows a caret + follows it; SCROLL scrolls the text.
+    // MARK: Expanded — owns the crown. EDIT shows a caret the crown walks; SCROLL is a plain
+    // native ScrollView the crown scrolls smoothly (exactly like the main chat transcript).
+    @ViewBuilder
     private var expanded: some View {
+        if mode == .edit {
+            editScroller
+        } else {
+            scrollViewer
+        }
+    }
+
+    /// EDIT mode: focusable so the crown drives the caret (a haptic tick per character). A leading
+    /// back-swipe (←) deletes the previous word. The caret's line carries the scroll anchor so the
+    /// field follows the caret as it walks.
+    private var editScroller: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
                 content
@@ -110,41 +121,20 @@ struct InlineDraftEditor: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .focusable(true)
             .focused($focused)
-            // Claim the crown the moment this focusable view actually mounts. This is the reliable
-            // half of the focus handoff: by the time .onAppear runs the view is in the tree, so the
-            // focus set sticks and the crown is exclusively ours (the chat feed is hidden anyway).
+            // Claim the crown the moment this focusable view mounts (the chat feed is hidden anyway).
             .onAppear { focused = true }
-            .modifier(CrownDriver(
-                mode: mode,
-                caretValue: $caretValue,
-                scrollValue: $scrollValue,
-                charCount: text.count
-            ))
-            // EDIT: crown steps the caret. Move the store caret + scroll its line into view.
+            .modifier(CrownDriver(caretValue: $caretValue, charCount: text.count))
             .onChange(of: caretValue) { _, v in
-                guard mode == .edit else { return }
                 let c = clampedCaret(Int(v.rounded()))
                 if c != caretIndex { caretIndex = c }
                 withAnimation(.easeOut(duration: 0.12)) {
                     proxy.scrollTo(caretAnchorID, anchor: .center)
                 }
             }
-            // SCROLL: crown drives a 0…1 position; map it across the text's word-chunk anchors
-            // so long text scrolls proportionally (not just top/bottom).
-            .onChange(of: scrollValue) { _, v in
-                guard mode == .scroll else { return }
-                let n = scrollChunks.count
-                guard n > 0 else { return }
-                let i = min(n - 1, max(0, Int((v * Double(n - 1)).rounded())))
-                withAnimation(.easeOut(duration: 0.12)) {
-                    proxy.scrollTo("chunk-\(i)", anchor: .top)
-                }
-            }
-            // Leading back-swipe (←) = delete the previous word (edit mode only).
+            // Leading back-swipe (←) = delete the previous word.
             .gesture(
                 DragGesture(minimumDistance: 30)
                     .onEnded { value in
-                        guard mode == .edit else { return }
                         let dx = value.translation.width, dy = value.translation.height
                         guard abs(dx) > abs(dy), dx < -40 else { return }
                         deletePreviousWord()
@@ -153,22 +143,25 @@ struct InlineDraftEditor: View {
         }
     }
 
+    /// SCROLL mode (just VIEWING the draft before sending): a PLAIN ScrollView with NO crown
+    /// binding and NO `.focusable`. On watchOS a ScrollView scrolls with the crown by default, and
+    /// since the chat transcript is hidden while the input is expanded there's nothing else
+    /// competing for the crown — so this scrolls smoothly line-by-line, the SAME way the main chat
+    /// body does. (The old version mapped the crown across a handful of word-chunk anchors via
+    /// `proxy.scrollTo`, which is why a small turn whipped it top↔bottom instead of scrolling.)
+    private var scrollViewer: some View {
+        ScrollView(.vertical) {
+            Text(isEmpty ? "Nothing to scroll yet." : text)
+                .font(.system(size: 15))
+                .foregroundStyle(isEmpty ? .secondary : .primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 2)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     /// Stable id for the caret line so ScrollViewReader can keep it visible (edit mode).
     private let caretAnchorID = "caretAnchor"
-
-    /// The draft split into small word-runs for scroll mode, each gets an `id` so the crown can
-    /// scroll to any point proportionally. ~6 words per chunk reads as roughly a line on the watch.
-    private var scrollChunks: [String] {
-        guard !text.isEmpty else { return [] }
-        let words = text.split(separator: " ", omittingEmptySubsequences: false).map(String.init)
-        var chunks: [String] = []
-        var i = 0
-        while i < words.count {
-            chunks.append(words[i..<min(i + 6, words.count)].joined(separator: " "))
-            i += 6
-        }
-        return chunks
-    }
 
     /// One stacked line of the draft in EDIT mode. The chunk that contains the caret carries the
     /// caret split (text before/after the marker) and `hasCaret = true` so it gets the scroll
@@ -228,35 +221,18 @@ struct InlineDraftEditor: View {
         }
     }
 
-    @ViewBuilder
+    /// EDIT-mode content: the draft rendered as stacked fixed-width lines with the caret drawn
+    /// INSIDE whichever line holds it. The anchor id (caretAnchorID) rides that one line, so
+    /// `proxy.scrollTo(caretAnchorID, .center)` tracks the caret's actual LINE as the crown walks
+    /// it. (SCROLL mode doesn't use this — it's a plain native ScrollView; see scrollViewer.)
     private var content: some View {
-        if mode == .edit {
-            // EDIT renders the draft as stacked chunk-lines (same chunking as scroll mode) and
-            // draws the caret INSIDE whichever chunk holds it. The anchor id (caretAnchorID) is
-            // attached to that one chunk, so `proxy.scrollTo(caretAnchorID, .center)` tracks the
-            // caret's actual LINE as the crown walks it — not the top of the field (the old bug:
-            // the anchor used to sit at the whole block's top-leading, so it never followed down).
-            let c = clampedCaret(caretIndex)
-            let pieces = caretChunks(caretAt: c)
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(pieces) { piece in
-                    caretLine(piece)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .id(piece.hasCaret ? caretAnchorID : "edit-\(piece.index)")
-                }
-            }
-        } else if isEmpty {
-            Text("Nothing to scroll yet.")
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            // Render as chunks so each has a scroll anchor; visually it's still continuous text.
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(scrollChunks.enumerated()), id: \.offset) { i, chunk in
-                    Text(chunk)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .id("chunk-\(i)")
-                }
+        let c = clampedCaret(caretIndex)
+        let pieces = caretChunks(caretAt: c)
+        return VStack(alignment: .leading, spacing: 0) {
+            ForEach(pieces) { piece in
+                caretLine(piece)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .id(piece.hasCaret ? caretAnchorID : "edit-\(piece.index)")
             }
         }
     }
@@ -278,41 +254,17 @@ struct InlineDraftEditor: View {
     }
 }
 
-/// Picks the right `.digitalCrownRotation` binding for the current mode. In EDIT the crown
-/// steps the caret (0…charCount, haptic ticks); in SCROLL it drives a 0…1 scroll value that we
-/// map onto the text's top/bottom anchors. Binding the crown to this focused child is what
-/// claims crown ownership away from the chat.
+/// Binds the crown to the caret in EDIT mode: 0…charCount, a haptic tick per character step.
+/// Binding the crown to this focused child is what claims crown ownership for caret editing.
+/// SCROLL mode no longer uses this — it relies on the ScrollView's built-in native crown scroll.
 private struct CrownDriver: ViewModifier {
-    let mode: InlineEditMode
     @Binding var caretValue: Double
-    @Binding var scrollValue: Double
     let charCount: Int
 
-    /// Detent size over the 0…1 scroll range so ONE crown notch advances roughly one chunk/line
-    /// rather than the whole field. scrollChunks ≈ one per ~6 words ≈ ~30 chars, so the number of
-    /// chunks ≈ charCount/30; the step is 1 / (chunks − 1). Clamped so short drafts still move and
-    /// the step is never zero/NaN.
-    private var scrollStep: Double {
-        let approxChunks = max(Double(charCount) / 30.0, 1)
-        return 1.0 / max(approxChunks - 1.0, 1.0)
-    }
-
     func body(content: Content) -> some View {
-        switch mode {
-        case .edit:
-            content.digitalCrownRotation(
-                $caretValue, from: 0, through: Double(max(charCount, 0)), by: nil,
-                sensitivity: .low, isContinuous: false, isHapticFeedbackEnabled: true
-            )
-        case .scroll:
-            // VIEWING the draft: keep the crown step tiny so a small turn nudges the text a line
-            // at a time instead of whipping it to the top. `.low` sensitivity + a fine `by:` step
-            // (the 0…1 position is divided across `scrollChunks`, so a small step ≈ one chunk/line).
-            content.digitalCrownRotation(
-                $scrollValue, from: 0, through: 1,
-                by: scrollStep, sensitivity: .low,
-                isContinuous: false, isHapticFeedbackEnabled: false
-            )
-        }
+        content.digitalCrownRotation(
+            $caretValue, from: 0, through: Double(max(charCount, 0)), by: nil,
+            sensitivity: .low, isContinuous: false, isHapticFeedbackEnabled: true
+        )
     }
 }

@@ -35,34 +35,41 @@ struct RootView: View {
             //   trailing = gear (Settings)
             // Mode + the rest of the composer controls live in the bottom bar.
             .toolbar {
+                // Both top icons hide while the chrome is collapsed (swipe-down) so the transcript
+                // owns the entire screen — only the OS clock the system draws remains. Swipe up (or
+                // the orange chevron) brings them back.
                 ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        store.listProjects()
-                        showProjects = true
-                    } label: {
-                        Image(systemName: "folder")
-                            .overlay(alignment: .topTrailing) {
-                                // Connection status dot — kept visible up top per spec.
-                                Circle()
-                                    .fill(ConnectionBadge.color(state: store.connection, agent: store.agentState))
-                                    .frame(width: 7, height: 7)
-                                    .offset(x: 5, y: -4)
-                            }
+                    if !store.chromeCollapsed {
+                        Button {
+                            store.listProjects()
+                            showProjects = true
+                        } label: {
+                            Image(systemName: "folder")
+                                .overlay(alignment: .topTrailing) {
+                                    // Connection status dot — kept visible up top per spec.
+                                    Circle()
+                                        .fill(ConnectionBadge.color(state: store.connection, agent: store.agentState))
+                                        .frame(width: 7, height: 7)
+                                        .offset(x: 5, y: -4)
+                                }
+                        }
+                        .accessibilityLabel("Projects")
                     }
-                    .accessibilityLabel("Projects")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { showSettings = true } label: {
-                        Image(systemName: "gearshape")
-                            // Context-window usage rides as a thin ring AROUND the gear (a
-                            // horizontal bar can't live between the toolbar items on watchOS —
-                            // no center region under the clock). Fills clockwise from the top,
-                            // green→red along the arc. Hidden until there's a reading.
-                            .overlay { ContextRing(fraction: store.contextFraction) }
+                    if !store.chromeCollapsed {
+                        Button { showSettings = true } label: {
+                            Image(systemName: "gearshape")
+                                // Context-window usage rides as a thin ring AROUND the gear (a
+                                // horizontal bar can't live between the toolbar items on watchOS —
+                                // no center region under the clock). Fills clockwise from the top,
+                                // green→red along the arc. Hidden until there's a reading.
+                                .overlay { ContextRing(fraction: store.contextFraction) }
+                        }
+                        .accessibilityLabel(store.contextWindow > 0
+                            ? "Settings. Context \(Int((store.contextFraction * 100).rounded())) percent full."
+                            : "Settings")
                     }
-                    .accessibilityLabel(store.contextWindow > 0
-                        ? "Settings. Context \(Int((store.contextFraction * 100).rounded())) percent full."
-                        : "Settings")
                 }
             }
             .sheet(isPresented: $showSettings) { SettingsView() }

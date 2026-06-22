@@ -111,24 +111,23 @@ struct ComposerView: View {
         }
     }
 
-    /// Collapsed chrome: a grab handle + just the Send button. The transcript fills the rest of
-    /// the screen, but Send stays mounted so the double-pinch primary action still fires (and an
-    /// empty draft still opens dictation). Tap the handle (or swipe up) to bring the composer back.
+    /// Collapsed chrome (via a swipe-down): EVERYTHING is hidden — the draft box, all three
+    /// buttons, and (in RootView) the top folder/gear icons — so the transcript fills the WHOLE
+    /// screen for reading. The only thing left is a small orange UP chevron at the very bottom:
+    /// tap it (or swipe up) to bring the composer + top icons back. It always points UP — up means
+    /// "reveal / expand", never down.
     private var collapsedBar: some View {
-        VStack(spacing: 3) {
-            Button { store.chromeCollapsed = false } label: {
-                Image(systemName: "chevron.up")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 16)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Show controls")
-
-            SendButton(live: canSend, corner: .none) { primaryAction() }
-                .padding(.horizontal, 8)
+        Button { store.chromeCollapsed = false } label: {
+            Image(systemName: "chevron.up")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 26, height: 22)
+                .background(Capsule().fill(Color.orange))
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show controls")
         .padding(.bottom, BarButtonGeometry.bottomGap)
     }
 
@@ -136,11 +135,13 @@ struct ComposerView: View {
 
     private var draftBox: some View {
         VStack(spacing: 2) {
-            // Orange chevron at the TOP of the box. UP = expand/take crown; DOWN = collapse/give back.
+            // Orange chevron at the TOP of the box. It ALWAYS points UP — up is the universal
+            // "expand / handle" affordance here (it never flips to a down arrow). Tap it to expand
+            // the input and take the crown; tap again (or send) to collapse back to one line.
             HStack {
                 Spacer()
                 Button { toggleExpand() } label: {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.up")
+                    Image(systemName: "chevron.up")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(.white)
                         .frame(width: 20, height: 20)
