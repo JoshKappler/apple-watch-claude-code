@@ -43,8 +43,15 @@ export const EVENT_BUFFER_LIMIT = 500;
  * This stops abandoned sessions (and their live agent processes) from leaking.
  */
 const SESSION_IDLE_TTL_MS = 30 * 60_000; // 30 min (WS resume window)
-/** HTTP sessions are considered idle much sooner — no poll for ~2 min → sweep. */
-const HTTP_IDLE_TTL_MS = 2 * 60_000; // 2 min
+/**
+ * HTTP (watch) sessions get the SAME generous window as WS. The watch's poll loop stops
+ * the instant its screen sleeps / wrist drops, but the agent turn keeps running server-side
+ * and its events buffer in the event log — so when the watch wakes seconds-to-minutes later
+ * it resumes from its cursor and gets the answer. A short TTL here was DESTROYING in-flight
+ * turns (sweep → destroySession → agent.cancel()) whenever you looked away for 2 min, so the
+ * reply never arrived. 30 min covers any realistic turn + glance-away.
+ */
+const HTTP_IDLE_TTL_MS = 30 * 60_000; // 30 min (was 2 min — killed turns when the watch slept)
 const SESSION_SWEEP_INTERVAL_MS = 60_000; // 1 min
 
 /** One indexed entry in a session's event log. */
