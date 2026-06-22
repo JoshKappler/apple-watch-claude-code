@@ -67,7 +67,13 @@ struct PermissionCardView: View {
 
             tapShortcut
         }
-        .background(riskColor.opacity(0.12))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Opaque, full-screen — this is a takeover gate; the transcript + composer
+        // behind it must NOT show through (a bare tint let everything bleed through).
+        .background {
+            Color.black.ignoresSafeArea()
+            riskColor.opacity(0.14).ignoresSafeArea()
+        }
         .onAppear { Haptics.permissionNeeded() }
     }
 
