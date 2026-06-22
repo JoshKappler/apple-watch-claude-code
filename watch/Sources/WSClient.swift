@@ -214,7 +214,7 @@ final class WSClient: NSObject, @unchecked Sendable {
         // re-send on the next live session instead of being lost with the process.
         if let data = UserDefaults.standard.data(forKey: "pinch.outbox.\(deviceId)"),
            let saved = try? JSONDecoder().decode([OutboxItem].self, from: data) {
-            self.outbox = saved
+            self.outbox = Array(saved.suffix(50))   // enforce the cap on restore too (keep newest)
         }
         startPathMonitor()
     }
@@ -330,12 +330,14 @@ final class WSClient: NSObject, @unchecked Sendable {
             if code == 401 || code == 403 {
                 NSLog("[PINCH-HTTP] session → %ld (auth)", code)
                 self.shouldStayConnected = false
+                self.failAllQueued()
                 self.emit(.failed("Auth failed — check your token."))
                 return
             }
             if code == 426 {
                 NSLog("[PINCH-HTTP] session → 426 (protocol mismatch)")
                 self.shouldStayConnected = false
+                self.failAllQueued()
                 self.emit(.failed("Protocol version mismatch — update the app."))
                 return
             }
@@ -486,12 +488,14 @@ final class WSClient: NSObject, @unchecked Sendable {
         }
 
         if code == 410 {
-            // session_gone — the backend lost our session. Drop it + resume id and re-create.
+            // session_gone — the backend lost our session. Single-flight the recreate (the guard
+            // means a racing prompt-410 won't double-create), and KEEP resumeSessionId so the
+            // recreate can revive the SAME conversation instead of starting a fresh, context-losing
+            // session.
             NSLog("[PINCH-HTTP] poll → 410 session_gone, re-creating session")
             queue.async {
+                guard self.sessionId != nil, self.shouldStayConnected else { return }
                 self.sessionId = nil
-                self.resumeSessionId = nil
-                guard self.shouldStayConnected else { return }
                 self.openSession()   // also cancels this poll task via teardown()
             }
             return
@@ -500,6 +504,7 @@ final class WSClient: NSObject, @unchecked Sendable {
             NSLog("[PINCH-HTTP] poll → %ld (auth)", code)
             queue.async {
                 self.shouldStayConnected = false
+                self.failAllQueued()
                 self.teardown(notify: false)
                 self.emit(.failed("Auth failed — check your token."))
             }
@@ -744,20 +749,37 @@ final class WSClient: NSObject, @unchecked Sendable {
 
     private func enqueueLocked(id: String, text: String) {
         outbox.append(OutboxItem(id: id, text: text))
-        // Hard cap so an extended outage can't grow the outbox without bound.
-        if outbox.count > 50 { outbox.removeFirst(outbox.count - 50) }
+        // Hard cap so an extended outage can't grow the outbox without bound. If we overflow,
+        // DEAD-LETTER the oldest (longest-failing) prompts — flip their bubbles to "Not sent" so a
+        // dropped message is visible, never silently gone.
+        while outbox.count > 50 {
+            let dropped = outbox.removeFirst()
+            inflight.remove(dropped.id)
+            reportDelivery(dropped.id, delivered: false)
+        }
         persistOutbox()
         drainLocked()
     }
 
-    /// Send every queued prompt that isn't already in flight. Idempotent: the backend dedups by
-    /// promptId, so a redrain racing an in-flight POST is harmless.
+    /// Terminal failure (auth / give-up): mark every queued prompt "Not sent" and clear the
+    /// outbox so nothing is left spinning on "Sending…" and nothing silently re-POSTs on the next
+    /// launch against credentials the user was already told failed.
+    private func failAllQueued() {
+        for item in outbox { reportDelivery(item.id, delivered: false) }
+        outbox.removeAll()
+        inflight.removeAll()
+        persistOutbox()
+    }
+
+    /// Send the OLDEST queued prompt — strictly ONE at a time (FIFO). Order matters: the backend
+    /// turns the first-arriving prompt into the turn and treats later ones as follow-ups, so
+    /// parallel POSTs would reorder messages composed offline. Each success chains to the next via
+    /// the completion handler; transient failures re-drive via scheduleOutboxRetry. Single-flight
+    /// also means at most one 410 can fire at a time, so a sweep can't spawn N session re-creates.
     private func drainLocked() {
-        guard sessionId != nil, !outbox.isEmpty else { return }
-        for item in outbox where !inflight.contains(item.id) {
-            inflight.insert(item.id)
-            sendPromptPOST(item)
-        }
+        guard sessionId != nil, inflight.isEmpty, let item = outbox.first else { return }
+        inflight.insert(item.id)
+        sendPromptPOST(item)
     }
 
     /// POST one outbox item via the fail-fast send session. Removes it from the outbox ONLY on a
@@ -793,14 +815,20 @@ final class WSClient: NSObject, @unchecked Sendable {
                 case 200, 202:
                     self.removeFromOutbox(item.id)
                     self.reportDelivery(item.id, delivered: true)
+                    self.drainLocked()          // chain: send the next queued prompt in order
                 case 410:
+                    // session_gone. Single-flight the recreate (the guard means a racing poll-410
+                    // or a follow-up send-410 no-ops once sessionId is nil). KEEP resumeSessionId so
+                    // openSession can revive the SAME conversation rather than starting fresh; the
+                    // prompt stays queued and re-drains on the new session.
+                    guard self.sessionId != nil else { return }
                     NSLog("[PINCH-HTTP] /api/prompt → 410; recreating session, prompt stays queued")
                     self.sessionId = nil
-                    self.resumeSessionId = nil
-                    if self.shouldStayConnected { self.openSession() }  // drains on the new session
+                    if self.shouldStayConnected { self.openSession() }
                 case 401, 403:
                     NSLog("[PINCH-HTTP] /api/prompt → %ld (auth)", code)
                     self.shouldStayConnected = false
+                    self.failAllQueued()        // terminal — nothing will retry; surface "Not sent"
                     self.teardown(notify: false)
                     self.emit(.failed("Auth failed — check your token."))
                 default:
@@ -872,6 +900,7 @@ final class WSClient: NSObject, @unchecked Sendable {
         // / bad host. Stop retrying and tell the user, rather than hammering forever.
         if !everReachedReady && attempt > maxColdAttempts {
             shouldStayConnected = false
+            failAllQueued()   // we're giving up — don't leave prompts spinning on "Sending…"
             emit(.failed("Can't reach server: \(lastErrorMessage)"))
             return
         }

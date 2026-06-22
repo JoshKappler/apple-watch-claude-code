@@ -132,8 +132,6 @@ export class ClaudeSession implements AgentSession {
       this.sendFollowUp(prompt);
       return;
     }
-    this.started = true;
-    this.turns.push(prompt);
 
     // LAZY import — nothing above module scope touches the SDK.
     const { query } = await import("@anthropic-ai/claude-agent-sdk");
@@ -162,11 +160,20 @@ export class ClaudeSession implements AgentSession {
       options.canUseTool = this.makeCanUseTool();
     }
 
-    this.query = query({
+    // Construct the query BEFORE committing `started`/turns. The lazy import above and this
+    // query() construction are the only setup steps that can throw; doing them first means a
+    // setup failure leaves us fully re-startable (started stays false, no turn enqueued), so
+    // handlePrompt can 500 and the watch's outbox retries cleanly instead of dropping the prompt.
+    // (turns.iterate() is a live generator — it simply parks until the first push below, so
+    // wiring it into query() before pushing is safe.)
+    const q = query({
       prompt: this.turns.iterate(),
       options,
     }) as ClaudeSession["query"];
 
+    this.started = true;
+    this.query = q;
+    this.turns.push(prompt);
     void this.consume();
   }
 

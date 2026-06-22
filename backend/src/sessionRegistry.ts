@@ -97,6 +97,10 @@ export interface SessionState {
    * delivery. The watch persists prompts to an outbox and re-sends any it never
    * got a 2xx for (a POST parked/dropped on a flaky LTE handoff). Without dedup a
    * retry would run the SAME turn twice. Bounded, insertion-ordered FIFO.
+   *
+   * NOTE: best-effort and PER-LIVE-SESSION only — bounded to the last 64 ids and NOT
+   * persisted into the durable record, so it does not survive a backend restart. A
+   * lost-ack followed by a restart could still double-run one turn (narrow window).
    */
   seenPromptIds: Set<string>;
 }

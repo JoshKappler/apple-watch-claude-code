@@ -305,8 +305,18 @@ async function handlePrompt(
       if (oldest !== undefined) state.seenPromptIds.delete(oldest);
     }
   }
-  // Fire the turn; events stream into the session's event log asynchronously.
-  void state.agent.start(text);
+  // Await ACCEPTANCE only: start() resolves once the turn is wired up (it fire-and-forgets the
+  // turn's actual streaming via consume()), so this does not block for the whole turn. If setup
+  // throws, un-poison the promptId so the watch's retry can re-deliver, and return 500 so the
+  // prompt stays in the outbox instead of being dropped on a phantom 202.
+  try {
+    await state.agent.start(text);
+  } catch (err) {
+    if (promptId) state.seenPromptIds.delete(promptId);
+    log.error({ err, sessionId: state.sessionId }, "agent.start failed");
+    sendJson(res, 500, { error: "start_failed" });
+    return;
+  }
   sendJson(res, 202, { ok: true });
 }
 
