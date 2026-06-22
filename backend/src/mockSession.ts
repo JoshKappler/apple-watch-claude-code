@@ -20,6 +20,19 @@ import {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/**
+ * Mirror of session.ts `contextWindowFor`: per-model context window so the mock's
+ * usage ring reads at the right scale (1M for Opus/Sonnet/Fable, 200k for Haiku).
+ */
+function mockContextWindowFor(model: string): number {
+  switch (model) {
+    case "claude-haiku-4-5-20251001":
+      return 200_000;
+    default:
+      return 1_000_000;
+  }
+}
+
 const SAMPLE_DIFF = renderDiff(
   "settings.tsx",
   '  return <div className="settings">',
@@ -82,8 +95,11 @@ export class MockSession implements AgentSession {
     try {
       this.deps.send(srv.status("thinking"));
       // Grow fake context occupancy each turn so the watch's usage ring visibly fills.
-      this.contextUsed = Math.min(this.contextUsed + 23_000, 200_000);
-      this.deps.send(srv.context(this.contextUsed, 200_000));
+      // Use the SAME per-model windows the real session reports, so the ring reads
+      // honestly in mock mode too (flat 200k made it ~5x too full on 1M models).
+      const window = mockContextWindowFor(this.deps.model);
+      this.contextUsed = Math.min(this.contextUsed + 23_000, window);
+      this.deps.send(srv.context(this.contextUsed, window));
       this.deps.send(srv.thinkingDelta("Looking at the settings page…"));
       await sleep(400);
       if (this.bail()) return;
