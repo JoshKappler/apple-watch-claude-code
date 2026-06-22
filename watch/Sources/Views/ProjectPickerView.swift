@@ -1,7 +1,8 @@
 //
 //  ProjectPickerView.swift
-//  List the backend's projects and select which repo the agent operates in.
-//  Selecting sends `select_project`; the server re-scopes and replies `ready`.
+//  Pick which repo the agent operates in, with the crown: turn to highlight, pause to commit
+//  (CrownPicker), or tap a row. Selecting sends `select_project`; the server re-scopes and
+//  replies `ready`.
 //
 
 import SwiftUI
@@ -11,50 +12,37 @@ struct ProjectPickerView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        List {
+        VStack(spacing: 6) {
             if store.projects.isEmpty {
-                HStack {
+                HStack(spacing: 6) {
                     ProgressView()
                     Text("Loading projects…")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
-            }
-            ForEach(store.projects) { project in
-                Button {
-                    store.selectProject(project)
-                    dismiss()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "folder.fill")
-                            .foregroundStyle(Color.accentColor)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(project.name)
-                                .font(.system(size: 14, weight: .medium))
-                            HStack(spacing: 4) {
-                                if let branch = project.branch {
-                                    Label(branch, systemImage: "arrow.triangle.branch")
-                                        .font(.system(size: 10))
-                                        .labelStyle(.titleAndIcon)
-                                }
-                                if project.dirty == true {
-                                    Text("• dirty")
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.orange)
-                                }
-                            }
-                            .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if store.currentProject?.id == project.id {
-                            Image(systemName: "checkmark")
-                                .foregroundStyle(.green)
-                        }
+                .frame(maxHeight: .infinity)
+            } else {
+                Text("Project · turn crown, pause to pick")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+
+                CrownPicker(
+                    items: store.projects,
+                    title: { $0.name },
+                    subtitle: { project in
+                        var parts: [String] = []
+                        if let branch = project.branch { parts.append(branch) }
+                        if project.dirty == true { parts.append("• dirty") }
+                        return parts.joined(separator: "  ")
+                    },
+                    initialIndex: store.projects.firstIndex(where: { $0.id == store.currentProject?.id }) ?? 0,
+                    onCommit: { project in
+                        store.selectProject(project)
+                        dismiss()
                     }
-                }
+                )
             }
         }
-        .navigationTitle("Projects")
         .onAppear { store.listProjects() }
     }
 }

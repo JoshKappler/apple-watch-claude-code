@@ -1,7 +1,8 @@
 //
 //  ModeMenuView.swift
-//  Pick the permission posture. Choosing `bypassPermissions` ("dangerously skip
-//  permissions") shows a guarded confirmation alert before it takes effect.
+//  Pick the permission posture with the crown: turn to highlight a mode, pause to commit
+//  (CrownPicker), or tap a row. Choosing `bypassPermissions` ("dangerously skip permissions")
+//  always routes through a guarded confirmation first — the dwell/tap only *proposes* it.
 //
 
 import SwiftUI
@@ -11,39 +12,29 @@ struct ModeMenuView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmBypass = false
 
+    private var modes: [PermissionMode] { PermissionMode.allCases }
+
     var body: some View {
-        List {
-            ForEach(PermissionMode.allCases) { mode in
-                Button {
+        VStack(spacing: 6) {
+            Text("Mode · turn crown, pause to pick")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+
+            CrownPicker(
+                items: modes,
+                title: { $0.label },
+                subtitle: { $0.blurb },
+                initialIndex: modes.firstIndex(of: store.mode) ?? 0,
+                onCommit: { mode in
                     if mode == .bypassPermissions {
-                        confirmBypass = true
+                        confirmBypass = true        // guarded — don't apply yet
                     } else {
                         store.setMode(mode)
                         dismiss()
                     }
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: mode.symbol)
-                            .foregroundStyle(mode == .bypassPermissions ? .red : .accentColor)
-                            .frame(width: 22)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(mode.label)
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(mode == .bypassPermissions ? .red : .primary)
-                            Text(mode.blurb)
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if store.mode == mode {
-                            Image(systemName: "checkmark")
-                                .foregroundStyle(.green)
-                        }
-                    }
                 }
-            }
+            )
         }
-        .navigationTitle("Mode")
         .alert("Skip all permissions?", isPresented: $confirmBypass) {
             Button("Cancel", role: .cancel) { }
             Button("Skip permissions", role: .destructive) {
