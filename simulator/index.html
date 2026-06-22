@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Pinch — Apple Watch Ultra simulator</title>
+  </head>
+  <body>
+    <div id="app">
+      <div class="stage">
+        <!-- Brand / hint -->
+        <header class="masthead">
+          <div class="brand"><span class="brand-mark">⌘</span> Pinch</div>
+          <div class="tagline">Claude Code on your wrist — reference simulator</div>
+        </header>
+
+        <!-- The Apple Watch Ultra body -->
+        <div class="watch">
+          <!-- Right-edge hardware -->
+          <div class="side-right">
+            <button id="crown" class="crown" title="Digital Crown — scroll transcript / scrub diff" aria-label="Digital Crown">
+              <span class="crown-ridges"></span>
+            </button>
+            <button id="side-button" class="side-button" title="Side button" aria-label="Side button"></button>
+          </div>
+          <!-- Left-edge Action button (orange — the Ultra signature) -->
+          <div class="side-left">
+            <button id="action-button" class="action-button" title="Action button (orange)" aria-label="Action button"></button>
+          </div>
+
+          <!-- Titanium body + OLED face -->
+          <div class="body">
+            <div class="screen" id="screen">
+              <!-- Top status bar -->
+              <div class="topbar">
+                <div class="conn">
+                  <span id="conn-dot" class="conn-dot" data-state="disconnected"></span>
+                  <span id="latency" class="latency"></span>
+                </div>
+                <div id="status-ring" class="status-ring" data-state="idle">
+                  <svg viewBox="0 0 44 44" width="44" height="44" aria-hidden="true">
+                    <circle class="ring-bg" cx="22" cy="22" r="19" />
+                    <circle id="status-ring-fg" class="ring-fg" cx="22" cy="22" r="19" />
+                  </svg>
+                  <div class="status-text">
+                    <span id="status-label" class="status-label">Idle</span>
+                    <span id="status-detail" class="status-detail"></span>
+                  </div>
+                </div>
+                <button id="settings-btn" class="icon-btn" title="Settings" aria-label="Settings">⚙</button>
+              </div>
+
+              <!-- Project + mode row -->
+              <div class="contextbar">
+                <button id="project-chip" class="project-chip" title="Tap to choose project">No project</button>
+                <div class="mode-wrap">
+                  <button id="mode-button" class="mode-button" data-mode="default" title="Permission mode">Default</button>
+                  <div id="mode-menu" class="mode-menu">
+                    <button data-mode="default">Default <small>edits &amp; bash ask</small></button>
+                    <button data-mode="acceptEdits">Accept edits <small>edits auto · bash asks</small></button>
+                    <button data-mode="plan">Plan <small>read-only</small></button>
+                    <button data-mode="bypassPermissions" class="danger">Bypass <small>skip all permissions</small></button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Transcript -->
+              <div id="transcript" class="transcript" tabindex="0"></div>
+
+              <!-- Compose bar -->
+              <div class="composer">
+                <textarea
+                  id="compose"
+                  class="compose"
+                  rows="1"
+                  placeholder="Hold mic or type…"
+                  autocomplete="off"
+                  autocapitalize="sentences"
+                ></textarea>
+                <div class="compose-actions">
+                  <button id="mic-btn" class="circle-btn mic" title="Hold to dictate" aria-label="Push to talk">🎙</button>
+                  <button id="send-btn" class="send-btn" aria-label="Send">
+                    <span class="send-label">Send</span>
+                    <span class="send-gesture">double-tap</span>
+                  </button>
+                  <button id="mute-btn" class="circle-btn mute" title="Mute readback" aria-label="Toggle voice" aria-pressed="false">🔊</button>
+                </div>
+                <div class="composer-footrow">
+                  <button id="cancel-btn" class="cancel-btn" title="Stop the current turn">
+                    Stop <span class="gesture">wrist-shake</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Settings panel (overlay on screen) -->
+              <div id="settings-panel" class="panel settings-panel">
+                <div class="panel-head">
+                  <span>Settings</span>
+                  <button id="settings-close" class="panel-close" aria-label="Close">✕</button>
+                </div>
+                <label class="field">
+                  <span>Server URL</span>
+                  <input id="cfg-url" type="text" spellcheck="false" placeholder="ws://localhost:8787/ws" />
+                </label>
+                <label class="field">
+                  <span>Device token</span>
+                  <input id="cfg-token" type="password" spellcheck="false" placeholder="PINCH_TOKEN" />
+                </label>
+                <button id="settings-save" class="primary-btn">Save &amp; connect</button>
+                <p class="field-hint">Stored locally in your browser.</p>
+              </div>
+
+              <!-- Projects panel -->
+              <div id="projects-panel" class="panel projects-panel">
+                <div class="panel-head">
+                  <span>Projects</span>
+                  <button id="projects-close" class="panel-close" aria-label="Close">✕</button>
+                </div>
+                <div id="projects-list" class="projects-list"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Hardware labels -->
+          <div class="hw-label hw-crown">Digital Crown · scroll</div>
+          <div class="hw-label hw-action">Action button</div>
+          <div class="hw-label hw-side">Side button</div>
+        </div>
+
+        <!-- Control-scheme legend -->
+        <footer class="legend">
+          <span><b>Send</b> = double-tap (or Enter)</span>
+          <span><b>Mic</b> = hold to talk</span>
+          <span><b>Crown</b> = wheel/drag to scroll</span>
+          <span><b>Stop</b> = wrist-shake</span>
+        </footer>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

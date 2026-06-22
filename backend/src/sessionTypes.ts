@@ -1,0 +1,197 @@
+/**
+ * The contract both the real (SDK) session and the mock session implement, plus
+ * the small heuristics that turn raw tool calls into glanceable watch summaries.
+ *
+ * Keeping the interface here (rather than in session.ts) means mockSession.ts can
+ * implement it without forcing the SDK module to load — the SDK is only imported
+ * lazily inside the real session path.
+ */
+import type {
+  PermissionMode,
+  PermissionKind,
+  Risk,
+  ServerMsg,
+} from "@pinch/protocol";
+
+/** How a session pushes protocol frames back out to the connection. */
+export type SendFn = (msg: ServerMsg) => void;
+
+/** Resolved when a parked approval gets a decision. */
+export interface ApprovalGate {
+  create(): {
+    requestId: string;
+    wait: Promise<{ decision: "allow" | "deny"; note?: string }>;
+  };
+  cancelAll(note?: string): void;
+}
+
+export interface SessionDeps {
+  send: SendFn;
+  approvals: ApprovalGate;
+  cwd: string;
+  model: string;
+  /** Anthropic session id to resume, if reconnecting. */
+  resume?: string;
+  initialMode: PermissionMode;
+  /** Notified once the SDK reports its session id (for resume bookkeeping). */
+  onSessionId?: (sessionId: string) => void;
+}
+
+/**
+ * Uniform session surface. The connection layer talks to this and never cares
+ * whether it's the real agent or the scripted mock.
+ */
+export interface AgentSession {
+  /** Begin a turn with the first user prompt. */
+  start(prompt: string): Promise<void>;
+  /** Queue a follow-up user turn into the live session. */
+  sendFollowUp(text: string): void;
+  /** Soft stop the current turn, keep the session alive (q.interrupt). */
+  interrupt(): Promise<void>;
+  /** Hard teardown (abort + close). */
+  cancel(): Promise<void>;
+  /** Change permission posture mid-session. */
+  setMode(mode: PermissionMode): void;
+  /** The Anthropic session id, once known (for resume). */
+  readonly sessionId: string | undefined;
+}
+
+/* ───────────────────────────── tool summaries ───────────────────────────── */
+
+export interface ToolSummary {
+  title: string;
+  subtitle?: string;
+}
+
+export interface PermissionMeta {
+  kind: PermissionKind;
+  risk: Risk;
+  title: string;
+  detail?: string;
+  diff?: string;
+  command?: string;
+}
+
+function str(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
+}
+
+function basename(p: string): string {
+  const parts = p.split(/[\\/]/);
+  return parts[parts.length - 1] || p;
+}
+
+/** Count added/removed lines for an Edit (old→new) into a "+N −M" subtitle. */
+function diffStat(oldStr?: string, newStr?: string): string | undefined {
+  if (oldStr === undefined && newStr === undefined) return undefined;
+  const removed = oldStr ? oldStr.split("\n").length : 0;
+  const added = newStr ? newStr.split("\n").length : 0;
+  return `+${added} −${removed}`;
+}
+
+/**
+ * Render a minimal unified-style diff. Not a real LCS diff — for tiny watch
+ * cards we just show the old block as removed and the new block as added, which
+ * is plenty to glance at and approve.
+ */
+export function renderDiff(
+  file: string | undefined,
+  oldStr: string | undefined,
+  newStr: string | undefined,
+): string {
+  const name = file ? basename(file) : "file";
+  const lines: string[] = [`--- a/${name}`, `+++ b/${name}`];
+  if (oldStr) for (const l of oldStr.split("\n")) lines.push(`-${l}`);
+  if (newStr) for (const l of newStr.split("\n")) lines.push(`+${l}`);
+  return lines.join("\n");
+}
+
+/** Summarize a tool_use into a short title/subtitle for the watch. */
+export function summarizeTool(name: string, input: Record<string, unknown>): ToolSummary {
+  switch (name) {
+    case "Read": {
+      const f = str(input.file_path);
+      return { title: f ? `Read ${basename(f)}` : "Read file", subtitle: f };
+    }
+    case "Edit":
+    case "MultiEdit": {
+      const f = str(input.file_path);
+      return {
+        title: f ? `Edit ${basename(f)}` : "Edit file",
+        subtitle: diffStat(str(input.old_string), str(input.new_string)),
+      };
+    }
+    case "Write": {
+      const f = str(input.file_path);
+      const content = str(input.content);
+      return {
+        title: f ? `Write ${basename(f)}` : "Write file",
+        subtitle: content ? `${content.split("\n").length} lines` : undefined,
+      };
+    }
+    case "Bash": {
+      const cmd = str(input.command);
+      return { title: "Run command", subtitle: cmd };
+    }
+    case "Glob":
+      return { title: "Find files", subtitle: str(input.pattern) };
+    case "Grep":
+      return { title: "Search", subtitle: str(input.pattern) };
+    case "WebFetch":
+      return { title: "Fetch URL", subtitle: str(input.url) };
+    case "WebSearch":
+      return { title: "Web search", subtitle: str(input.query) };
+    case "TodoWrite":
+      return { title: "Update todos" };
+    default:
+      return { title: name };
+  }
+}
+
+/**
+ * Classify a tool call into permission kind + risk and build the approval card,
+ * including a diff for edits/writes and the command line for Bash.
+ */
+export function permissionMeta(
+  name: string,
+  input: Record<string, unknown>,
+): PermissionMeta {
+  switch (name) {
+    case "Bash": {
+      const command = str(input.command) ?? "";
+      const risk: Risk = /\b(rm|sudo|curl|wget|kill|dd|mkfs|:\(\)\{)/.test(command)
+        ? "high"
+        : /\b(git\s+push|npm\s+publish|rm\b)/.test(command)
+          ? "medium"
+          : "low";
+      return {
+        kind: "command",
+        risk,
+        title: "Run command",
+        detail: command,
+        command,
+      };
+    }
+    case "Edit":
+    case "MultiEdit": {
+      const f = str(input.file_path);
+      return {
+        kind: "edit",
+        risk: "low",
+        title: f ? `Edit ${basename(f)}` : "Edit file",
+        diff: renderDiff(f, str(input.old_string), str(input.new_string)),
+      };
+    }
+    case "Write": {
+      const f = str(input.file_path);
+      return {
+        kind: "write",
+        risk: "medium",
+        title: f ? `Write ${basename(f)}` : "Write file",
+        diff: renderDiff(f, undefined, str(input.content)),
+      };
+    }
+    default:
+      return { kind: "other", risk: "low", title: name };
+  }
+}

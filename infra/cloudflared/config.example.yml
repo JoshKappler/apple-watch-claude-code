@@ -1,0 +1,38 @@
+# Pinch — named Cloudflare Tunnel ingress config
+# Copy to ~/.cloudflared/config.yml and replace the placeholders below.
+#
+# Get TUNNEL-UUID + credentials path after running:
+#   cloudflared tunnel create pinch
+# It prints "Created tunnel pinch with id <TUNNEL-UUID>" and writes
+#   ~/.cloudflared/<TUNNEL-UUID>.json   (the credentials file)
+#
+# Then map the hostname to the tunnel with:
+#   cloudflared tunnel route dns pinch agent.<yourdomain>
+
+# The tunnel's UUID (NOT the name). e.g. 6ff42ae2-765d-4adf-8112-31c55c1551ef
+tunnel: TUNNEL-UUID
+
+# Absolute path to the credentials JSON written by `tunnel create`.
+# NOTE: use the real absolute path; ~ is expanded by cloudflared here, but
+# being explicit avoids surprises under launchd (no shell, no $HOME assumptions).
+credentials-file: /Users/josh/.cloudflared/TUNNEL-UUID.json
+
+# Idle WebSocket tuning. Cloudflare's edge closes idle WS connections after
+# ~100s; the app already sends a 25s heartbeat so this never trips. These keep
+# the origin side patient too.
+originRequest:
+  connectTimeout: 30s
+  # Keep long-lived WS upgrades alive at the origin. 0 disables the read idle
+  # timeout so cloudflared won't be the one to hang up a quiet-but-open socket.
+  tcpKeepAlive: 25s
+
+ingress:
+  # Public hostname -> local Pinch WebSocket server.
+  # The backend listens on ws://localhost:8787 and serves the WS on path /ws,
+  # but ingress maps the whole host; the watch/sim connect to wss://.../ws.
+  - hostname: agent.<yourdomain>
+    service: ws://localhost:8787
+
+  # Catch-all: anything that didn't match a rule above gets a hard 404 so the
+  # tunnel never proxies unexpected paths/hosts to the origin.
+  - service: http_status:404

@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Pinch Cloudflare Tunnel LaunchAgent template.
+
+  Placeholders (substituted by install-launchd.sh, or edit by hand):
+    __CLOUDFLARED_BIN__  absolute path to cloudflared (e.g. /opt/homebrew/bin/cloudflared)
+    __TUNNEL_CONFIG__    absolute path to the tunnel config
+                         (e.g. /Users/josh/.cloudflared/config.yml)
+    __LOG_DIR__          absolute path for logs (e.g. /Users/josh/Library/Logs/pinch)
+
+  Runs: cloudflared tunnel --config <config> run pinch
+  No secrets here — credentials live in the file referenced by the config's
+  credentials-file: key.
+
+  Install with: infra/launchd/install-launchd.sh
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pinch.tunnel</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__CLOUDFLARED_BIN__</string>
+        <string>tunnel</string>
+        <string>--config</string>
+        <string>__TUNNEL_CONFIG__</string>
+        <string>run</string>
+        <string>pinch</string>
+    </array>
+
+    <!-- Restart on crash only. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__LOG_DIR__/tunnel.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__LOG_DIR__/tunnel.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

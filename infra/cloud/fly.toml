@@ -1,0 +1,57 @@
+# Pinch — Fly.io always-on Machine (cloud mode).
+#
+# Deploy from the REPO ROOT (the Docker build context is the root):
+#   fly launch --no-deploy --copy-config --name pinch-<you>   # first time, creates the app
+#   fly volumes create pinch_workspace --size 10 --region <region>
+#   fly secrets set ANTHROPIC_API_KEY=... PINCH_TOKEN=... GITHUB_TOKEN=... REPOS="owner/repo1 owner/repo2"
+#   fly deploy
+#
+# This config pins ONE Machine that never auto-stops so the WebSocket stays up.
+
+app = "pinch-CHANGEME"        # set to your unique Fly app name
+primary_region = "iad"         # pick a region near you (fly platform regions)
+
+[build]
+  dockerfile = "infra/cloud/Dockerfile"
+  # Build context is the repo root; run `fly deploy` from there.
+
+[env]
+  PORT = "8787"
+  # Repos are cloned into the mounted volume; the allowlist is set at boot by
+  # entrypoint.sh from REPOS. /workspace is the volume mount.
+  PINCH_PROJECTS = "/workspace"
+  PINCH_MOCK = "0"
+  PINCH_MODEL = "claude-opus-4-8"
+  LOG_LEVEL = "info"
+
+# Persistent volume for cloned repos so they survive Machine restarts/deploys.
+[mounts]
+  source = "pinch_workspace"
+  destination = "/workspace"
+
+# Expose the WebSocket publicly on 443 -> internal 8787, with WS support.
+[[services]]
+  protocol = "tcp"
+  internal_port = 8787
+  # Keep the single Machine running 24/7 — serverless-style suspend would kill
+  # the long-lived WebSocket and the agent process.
+  auto_stop_machines = false
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]   # TLS-terminate at the edge; http handler upgrades to WS
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 50
+    soft_limit = 25
+
+# Single Machine sizing. Bump memory if the agent + a big repo need it.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+
+# NOTE: secrets are NOT stored here. Set them out of band:
+#   fly secrets set ANTHROPIC_API_KEY=... PINCH_TOKEN=... GITHUB_TOKEN=... REPOS="owner/repo1"

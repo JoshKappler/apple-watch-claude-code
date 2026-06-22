@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Pinch backend LaunchAgent template.
+
+  Placeholders (substituted by install-launchd.sh, or edit by hand):
+    __NODE_BIN__     absolute path to node (e.g. /opt/homebrew/bin/node)
+    __BACKEND_DIR__  absolute path to the backend workspace
+                     (e.g. /Users/josh/desktop/apple watch/backend)
+    __LOG_DIR__      absolute path for logs (e.g. /Users/josh/Library/Logs/pinch)
+
+  Secrets are NOT baked in here. The backend reads backend/.env via dotenv.
+  Keep PINCH_TOKEN / ANTHROPIC_API_KEY in that .env (chmod 600), not in this plist,
+  so the token never lands in a world-readable file under ~/Library/LaunchAgents.
+
+  Install with: infra/launchd/install-launchd.sh
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pinch.server</string>
+
+    <!-- Run the built server: node dist/index.js, with cwd = backend dir so
+         dotenv finds backend/.env. Build first: npm run build --workspace backend -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>__NODE_BIN__</string>
+        <string>dist/index.js</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__BACKEND_DIR__</string>
+
+    <!-- Restart on crash only (not on a clean exit). Combined with the throttle,
+         this avoids tight crash loops. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!-- Start at login/bootstrap. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Minimum seconds between (re)starts. -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Make PATH sane for child processes (git, etc.) without a login shell. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__LOG_DIR__/server.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__LOG_DIR__/server.err.log</string>
+
+    <!-- Run as a regular user agent (gui domain), never as root/admin. -->
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

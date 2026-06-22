@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Push Notifications capability. Xcode flips this to "production" for release builds.
+	     Needs an APNs key on your Apple Developer account (see PushRegistration.swift + README). -->
+	<key>aps-environment</key>
+	<string>development</string>
+
+	<!-- Extended Runtime sessions are gated by Apple to specific use-cases (workout,
+	     mindfulness, smart-alarm, physical-therapy, etc.). Pinch intentionally does NOT
+	     request one — we keep waits short/foreground and lean on APNs. If you have a real
+	     justification, uncomment and add the matching capability in project.yml:
+	<key>com.apple.developer.watchkit.extended-runtime-session</key>
+	<array>
+		<string>self-care</string>
+	</array>
+	-->
+</dict>
+</plist>

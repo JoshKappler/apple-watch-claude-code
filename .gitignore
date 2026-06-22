@@ -38,3 +38,6 @@ cert.pem
 # Local runtime state
 state/
 sessions/
+
+# Claude Code local runtime artifacts
+.claude/
