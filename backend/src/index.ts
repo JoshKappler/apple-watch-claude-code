@@ -20,10 +20,11 @@ function main(): void {
         path: "/ws",
         protocolVersion: PROTOCOL_VERSION,
         mock: config.mock,
+        auth: config.mock ? "n/a (mock)" : config.authMode,
         model: config.model,
         projects: projectRegistry.list().map((p) => p.id),
       },
-      `Pinch backend listening on :${config.port}/ws${config.mock ? " (MOCK)" : ""}`,
+      `Pinch backend listening on :${config.port}/ws${config.mock ? " (MOCK)" : ` (${config.authMode})`}`,
     );
   });
 

@@ -42,18 +42,28 @@ const EnvSchema = z
     PINCH_MOCK: boolFlag,
     PINCH_PROJECTS: csv,
     PINCH_MODEL: z.string().default("claude-opus-4-8"),
-    ANTHROPIC_API_KEY: z.string().optional(),
+    // How the Agent SDK authenticates to Anthropic:
+    //  - "subscription" (default): use the Claude Code login already on this Mac
+    //    (your Claude Max plan, stored in the keychain). No API key needed.
+    //  - "apikey": use ANTHROPIC_API_KEY.
+    PINCH_AUTH: z.enum(["subscription", "apikey"]).default("subscription"),
+    ANTHROPIC_API_KEY: z
+      .string()
+      .optional()
+      .transform((v) => (v && v.trim().length > 0 ? v.trim() : undefined)),
     LOG_LEVEL: z
       .enum(["trace", "debug", "info", "warn", "error", "fatal"])
       .default("info"),
     NODE_ENV: z.string().default("development"),
   })
   .superRefine((env, ctx) => {
-    if (!env.PINCH_MOCK && !env.ANTHROPIC_API_KEY) {
+    if (!env.PINCH_MOCK && env.PINCH_AUTH === "apikey" && !env.ANTHROPIC_API_KEY) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["ANTHROPIC_API_KEY"],
-        message: "ANTHROPIC_API_KEY is required when PINCH_MOCK is not set",
+        message:
+          "ANTHROPIC_API_KEY is required when PINCH_AUTH=apikey. " +
+          "Leave PINCH_AUTH unset (or =subscription) to use your Claude Code login instead.",
       });
     }
     if (!env.PINCH_MOCK && env.PINCH_PROJECTS.length === 0) {
@@ -76,13 +86,22 @@ function buildConfig() {
     process.exit(1);
   }
   const env = parsed.data;
+
+  // In subscription mode, make sure no stray ANTHROPIC_API_KEY (e.g. an empty
+  // `ANTHROPIC_API_KEY=` line in .env, or one exported in the shell) leaks to the
+  // SDK — an empty/forced key would override the Claude Code keychain login.
+  if (env.PINCH_AUTH === "subscription") {
+    delete process.env.ANTHROPIC_API_KEY;
+  }
+
   return {
     port: env.PORT,
     token: env.PINCH_TOKEN,
     mock: env.PINCH_MOCK,
     projects: env.PINCH_PROJECTS,
     model: env.PINCH_MODEL,
-    anthropicApiKey: env.ANTHROPIC_API_KEY,
+    authMode: env.PINCH_AUTH,
+    anthropicApiKey: env.PINCH_AUTH === "apikey" ? env.ANTHROPIC_API_KEY : undefined,
     logLevel: env.LOG_LEVEL,
     isDev: env.NODE_ENV !== "production",
   } as const;
