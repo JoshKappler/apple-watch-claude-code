@@ -13,6 +13,7 @@
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "sim": "npm run dev --workspace simulator",
+    "up": "./pinch-up.sh",
     "smoke": "node scripts/smoke-test.mjs"
   },
   "engines": {

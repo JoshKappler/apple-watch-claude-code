@@ -91,23 +91,25 @@ echo
 
 # --- 4. reminders -----------------------------------------------------------
 bold "4. Still needed in backend/.env"
-info "ANTHROPIC_API_KEY=...   (or set PINCH_MOCK=1 to run without the SDK)"
-info "PINCH_PROJECTS=...      (comma-separated ABSOLUTE repo paths the agent may edit)"
+info "ANTHROPIC_API_KEY=...      (or use PINCH_AUTH=subscription, the default)"
+info "PINCH_PROJECT_ROOTS=...    (a parent dir to scan, e.g. ~/Desktop/projects —"
+info "                            every child repo shows up on the watch)"
+info "PINCH_PROJECTS=...         (optional: explicit ABSOLUTE repo paths to also allow)"
 echo
 
 # --- next steps -------------------------------------------------------------
 bold "Next steps"
 cat <<'EOF'
-  1. Edit backend/.env: add ANTHROPIC_API_KEY and PINCH_PROJECTS.
+  1. Edit backend/.env: set PINCH_PROJECT_ROOTS (and auth — see above).
   2. Install deps:        npm install
-  3. Run the backend:     npm run dev
-  4. Test with the sim:   npm run sim        (open the browser "watch")
-  5. Go public (cellular):
-       - one-time:  see infra/cloudflared/README.md
-                    (cloudflared login / create pinch / route dns)
-       - then:      infra/start-tunnel.sh
-                    (or infra/launchd/install-launchd.sh to keep it running)
-  6. In the watch/sim, set URL = wss://agent.<yourdomain>/ws and the PINCH_TOKEN.
+  3. Test with the sim:   npm run sim        (open the browser "watch")
+  4. Start a remote session the watch can reach, in ONE command:
+       ./pinch-up.sh      (builds, runs the backend, opens a tunnel,
+                           and prints the exact wss URL + token to enter)
+  5. In the watch/sim, set URL = wss://<your-host>/ws and the PINCH_TOKEN.
+
+  Stable URL across runs: reserve a domain and pass PINCH_NGROK_DOMAIN=...,
+  or set up the named Cloudflare Tunnel (infra/cloudflared/README.md).
 
   Full walkthrough: docs/SETUP.md   •   Security: infra/SECURITY.md
 EOF

@@ -40,7 +40,12 @@ const EnvSchema = z
       .pipe(z.number().int().positive()),
     PINCH_TOKEN: z.string().min(1, "PINCH_TOKEN is required"),
     PINCH_MOCK: boolFlag,
+    // Explicit allowlist of repo roots (each becomes one selectable project).
     PINCH_PROJECTS: csv,
+    // Parent dir(s) to SCAN: every immediate child folder becomes a selectable
+    // project, recomputed each time the watch opens the picker. This is what makes
+    // "point the server at ~/Desktop/projects and see everything" work.
+    PINCH_PROJECT_ROOTS: csv,
     PINCH_MODEL: z.string().default("claude-opus-4-8"),
     // How the Agent SDK authenticates to Anthropic:
     //  - "subscription" (default): use the Claude Code login already on this Mac
@@ -66,11 +71,17 @@ const EnvSchema = z
           "Leave PINCH_AUTH unset (or =subscription) to use your Claude Code login instead.",
       });
     }
-    if (!env.PINCH_MOCK && env.PINCH_PROJECTS.length === 0) {
+    if (
+      !env.PINCH_MOCK &&
+      env.PINCH_PROJECTS.length === 0 &&
+      env.PINCH_PROJECT_ROOTS.length === 0
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["PINCH_PROJECTS"],
-        message: "PINCH_PROJECTS must list at least one absolute repo path",
+        message:
+          "Set PINCH_PROJECT_ROOTS (a parent dir to scan, e.g. ~/Desktop/projects) " +
+          "and/or PINCH_PROJECTS (explicit absolute repo paths) — at least one is required",
       });
     }
   });
@@ -99,6 +110,7 @@ function buildConfig() {
     token: env.PINCH_TOKEN,
     mock: env.PINCH_MOCK,
     projects: env.PINCH_PROJECTS,
+    projectRoots: env.PINCH_PROJECT_ROOTS,
     model: env.PINCH_MODEL,
     authMode: env.PINCH_AUTH,
     anthropicApiKey: env.PINCH_AUTH === "apikey" ? env.ANTHROPIC_API_KEY : undefined,

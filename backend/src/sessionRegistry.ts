@@ -205,7 +205,7 @@ export function createSession(
 export function defaultProject(): Project | null {
   const project = projectRegistry.default();
   if (!project && !config.mock) return null;
-  return project ?? { id: "mock", name: "mock", root: process.cwd() };
+  return project ?? { id: "mock", name: "mock", root: process.cwd(), mtimeMs: 0 };
 }
 
 /**
