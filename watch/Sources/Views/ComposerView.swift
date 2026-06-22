@@ -1,6 +1,6 @@
 //
 //  ComposerView.swift
-//  Fixed bottom bar (NOT inside a scroll view) holding the voice + send controls.
+//  Fixed bottom bar (NOT inside a scroll view) holding the voice + send + navigation controls.
 //
 //  Voice in = Apple's SYSTEM DICTATION, presented programmatically (see Dictation.swift) so
 //  the SAME path serves the on-screen mic and the Action button. Tap the mic (or press the
@@ -8,18 +8,25 @@
 //  (SFSpeechRecognizer doesn't work on watchOS, so an in-app always-on listener isn't
 //  possible; this is the real, high-quality dictation.)
 //
-//  Send carries `.handGestureShortcut(.primaryAction)` so the hardware DOUBLE-TAP sends, on
-//  Series 9 / Ultra 2+. Only ONE primary action per screen, outside a ScrollView — hence this
-//  fixed bar. Tapping the draft opens the crown-cursor editor (CaretEditorView) for mid-message
-//  edits. The draft lives in the store so the Action-button dictation can populate it too.
+//  SEND is the hardware DOUBLE PINCH by default (`.handGestureShortcut(.primaryAction)`,
+//  Series 9 / Ultra 2+). The on-screen Send button is OFF by default and toggled on in
+//  Settings ("Show on-screen Send") — useful in the Simulator, where double pinch doesn't
+//  fire, and on older watches. Even when the visible Send button is hidden, a zero-size
+//  carrier keeps the double-pinch primary action wired. Only ONE primary action per screen.
+//
+//  Projects + Mode live here (not the top bar) because watchOS renders only one trailing
+//  toolbar item. Tapping the draft opens the crown-cursor editor (CaretEditorView).
 //
 
 import SwiftUI
 
 struct ComposerView: View {
     @EnvironmentObject private var store: PinchStore
+    @AppStorage("pinch.showSendButton") private var showSendButton = false
     @State private var showEditor = false
     @State private var showActions = false
+    @State private var showModes = false
+    @State private var showProjects = false
 
     private var connected: Bool {
         if case .ready = store.connection { return true }
@@ -50,30 +57,42 @@ struct ComposerView: View {
                 .transition(.opacity)
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 // Mic → Apple system dictation (same path the Action button uses).
-                Button {
+                iconButton("mic.fill", tint: Color.pinch, label: "Dictate") {
                     Dictation.present { store.appendDictated($0) }
-                } label: {
-                    Image(systemName: "mic.fill")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(Color.pinch)
-                        .frame(width: 48, height: 52)
                 }
-                .buttonStyle(.bordered)
-                .accessibilityLabel("Dictate")
 
-                SendButton(enabled: canSend) { sendNow() }
+                // Send: visible only when enabled in Settings; otherwise a hidden carrier
+                // keeps double pinch working. Exactly one primary action exists at a time.
+                if showSendButton {
+                    SendButton(enabled: canSend) { sendNow() }
+                } else {
+                    Button(action: sendNow) { Color.clear }
+                        .frame(width: 0, height: 0)
+                        .opacity(0)
+                        .disabled(!canSend)
+                        .handGestureShortcut(.primaryAction)   // double pinch → send
+                        .accessibilityHidden(true)
+                }
 
-                // watchOS has no `Menu`, so the overflow is a confirmationDialog (action sheet).
-                Button {
+                // Mode (default / acceptEdits / plan / bypass). Red when bypass is armed.
+                iconButton(store.mode.symbol,
+                           tint: store.mode == .bypassPermissions ? .red : .primary,
+                           label: "Mode") {
+                    showModes = true
+                }
+
+                // Project picker.
+                iconButton("folder", tint: .primary, label: "Projects") {
+                    store.listProjects()
+                    showProjects = true
+                }
+
+                // Overflow — watchOS has no `Menu`, so it's a confirmationDialog.
+                iconButton("ellipsis", tint: .primary, label: "More actions") {
                     showActions = true
-                } label: {
-                    Image(systemName: "ellipsis").frame(width: 32, height: 52)
                 }
-                .buttonStyle(.bordered)
-                .frame(width: 32)
-                .accessibilityLabel("More actions")
             }
             .padding(.horizontal, 6)
         }
@@ -81,6 +100,8 @@ struct ComposerView: View {
         .sheet(isPresented: $showEditor) {
             CaretEditorView(text: $store.draft, onSend: { sendNow() })
         }
+        .sheet(isPresented: $showModes) { ModeMenuView() }
+        .sheet(isPresented: $showProjects) { ProjectPickerView() }
         .confirmationDialog("Actions", isPresented: $showActions, titleVisibility: .hidden) {
             if !store.draft.isEmpty {
                 Button("Edit message") { showEditor = true }
@@ -94,6 +115,21 @@ struct ComposerView: View {
         }
     }
 
+    /// A compact, equal-width bordered icon button for the bottom bar.
+    private func iconButton(_ systemName: String,
+                            tint: Color,
+                            label: String,
+                            action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.bordered)
+        .accessibilityLabel(label)
+    }
+
     private func sendNow() {
         let text = store.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -102,7 +138,7 @@ struct ComposerView: View {
     }
 }
 
-// MARK: - Send (double-tap primary action)
+// MARK: - Send (double-pinch primary action; shown only when enabled in Settings)
 
 private struct SendButton: View {
     let enabled: Bool
@@ -111,14 +147,13 @@ private struct SendButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "paperplane.fill")
-                .font(.system(size: 20, weight: .semibold))
-                .frame(maxWidth: .infinity)
-                .frame(height: 52)
+                .font(.system(size: 18, weight: .semibold))
+                .frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.borderedProminent)
         .tint(.pinch)
         .disabled(!enabled)
-        // Hardware double-tap → Send. No-op on unsupported hardware; on-screen tap still works.
+        // Hardware double pinch → Send. No-op on unsupported hardware; on-screen tap still works.
         .handGestureShortcut(.primaryAction)
         .accessibilityLabel("Send")
     }

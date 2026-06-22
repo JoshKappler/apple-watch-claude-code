@@ -11,8 +11,6 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var store: PinchStore
     @State private var showSettings = false
-    @State private var showModes = false
-    @State private var showProjects = false
 
     var body: some View {
         NavigationStack {
@@ -31,29 +29,19 @@ struct RootView: View {
             .animation(.snappy, value: store.pendingPermission)
             // No navigationTitle — the app name is dead weight on a tiny screen, and the
             // system clock the OS draws at the very top can't be removed by an app anyway.
+            // watchOS only renders ONE trailing toolbar item, so Projects + Mode moved into
+            // the bottom composer bar; only the connection badge + gear live up here.
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     ConnectionBadge(state: store.connection, agent: store.agentState)
                 }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button {
-                        store.listProjects()
-                        showProjects = true
-                    } label: {
-                        Image(systemName: "folder")
-                    }
-                    Button { showModes = true } label: {
-                        Image(systemName: store.mode.symbol)
-                            .foregroundStyle(store.mode == .bypassPermissions ? .red : .primary)
-                    }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: {
                         Image(systemName: "gearshape")
                     }
                 }
             }
             .sheet(isPresented: $showSettings) { SettingsView() }
-            .sheet(isPresented: $showModes) { ModeMenuView() }
-            .sheet(isPresented: $showProjects) { ProjectPickerView() }
         }
         // Orange is applied per-control (send, mic, bubbles), NOT globally — a global tint
         // turns watchOS 26's toolbar buttons into solid orange blobs. Keep nav icons neutral.
