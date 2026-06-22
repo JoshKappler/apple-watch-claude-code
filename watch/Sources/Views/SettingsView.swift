@@ -55,7 +55,7 @@ struct SettingsView: View {
             }
 
             Section("Gestures") {
-                LabeledContent("Double-tap send") {
+                LabeledContent("Double pinch to send") {
                     Label(DoubleTap.statusLabel, systemImage: DoubleTap.isAvailable ? "checkmark.circle.fill" : "minus.circle")
                         .foregroundStyle(DoubleTap.isAvailable ? .green : .secondary)
                         .labelStyle(.titleAndIcon)
@@ -118,6 +118,6 @@ enum DoubleTap {
     static var statusLabel: String { isAvailable ? "Supported" : "On-screen only" }
 
     static var detail: String {
-        "Double-tap requires Apple Watch Series 9 / Ultra 2 or later with Double Tap enabled in Settings → Gestures. On older models, tap the Send button on screen."
+        "Double pinch (Apple's Double Tap gesture — pinch index finger and thumb twice) requires Apple Watch Series 9 / Ultra 2 or later, with Double Tap enabled in Settings → Gestures. On older models, tap Send on screen."
     }
 }

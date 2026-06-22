@@ -75,9 +75,9 @@ struct CaretEditorView: View {
                         .frame(height: 36)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.accentColor)
+                .tint(.pinch)
                 .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .handGestureShortcut(.primaryAction)   // double-tap sends from the editor too
+                .handGestureShortcut(.primaryAction)   // double pinch sends from the editor too
             }
             .padding(.horizontal, 6)
             .padding(.bottom, 2)

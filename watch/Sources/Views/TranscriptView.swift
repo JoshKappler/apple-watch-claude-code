@@ -73,7 +73,7 @@ private struct UserBubble: View {
             Text(text)
                 .font(.system(size: 14))
                 .padding(.horizontal, 10).padding(.vertical, 6)
-                .background(Color.accentColor.opacity(0.85), in: .rect(cornerRadius: 12))
+                .background(Color.pinch.opacity(0.9), in: .rect(cornerRadius: 12))
                 .foregroundStyle(.white)
         }
     }
@@ -195,8 +195,8 @@ private struct EmptyHint: View {
         VStack(spacing: 4) {
             Image(systemName: "mic.circle")
                 .font(.system(size: 28))
-                .foregroundStyle(.secondary)
-            Text("Hold the mic, then send.")
+                .foregroundStyle(Color.pinch)
+            Text("Tap the mic to dictate.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

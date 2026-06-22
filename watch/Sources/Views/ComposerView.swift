@@ -56,8 +56,9 @@ struct ComposerView: View {
                     Dictation.present { store.appendDictated($0) }
                 } label: {
                     Image(systemName: "mic.fill")
-                        .font(.system(size: 18, weight: .semibold))
-                        .frame(width: 44, height: 40)
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(Color.pinch)
+                        .frame(width: 48, height: 52)
                 }
                 .buttonStyle(.bordered)
                 .accessibilityLabel("Dictate")
@@ -68,14 +69,13 @@ struct ComposerView: View {
                 Button {
                     showActions = true
                 } label: {
-                    Image(systemName: "ellipsis").frame(width: 30, height: 30)
+                    Image(systemName: "ellipsis").frame(width: 32, height: 52)
                 }
                 .buttonStyle(.bordered)
-                .frame(width: 30)
+                .frame(width: 32)
                 .accessibilityLabel("More actions")
             }
             .padding(.horizontal, 6)
-            .padding(.bottom, 2)
         }
         .animation(.snappy, value: store.draft.isEmpty)
         .sheet(isPresented: $showEditor) {
@@ -111,12 +111,12 @@ private struct SendButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "paperplane.fill")
-                .font(.system(size: 18, weight: .semibold))
+                .font(.system(size: 20, weight: .semibold))
                 .frame(maxWidth: .infinity)
-                .frame(height: 40)
+                .frame(height: 52)
         }
         .buttonStyle(.borderedProminent)
-        .tint(.accentColor)
+        .tint(.pinch)
         .disabled(!enabled)
         // Hardware double-tap → Send. No-op on unsupported hardware; on-screen tap still works.
         .handGestureShortcut(.primaryAction)

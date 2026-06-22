@@ -17,6 +17,8 @@ struct RootView: View {
     var body: some View {
         NavigationStack {
             ZStack {
+                Color.black.ignoresSafeArea()
+
                 ConversationScreen()
 
                 // Permission gate overlays everything when present.
@@ -27,7 +29,8 @@ struct RootView: View {
                 }
             }
             .animation(.snappy, value: store.pendingPermission)
-            .navigationTitle("Pinch")
+            // No navigationTitle — the app name is dead weight on a tiny screen, and the
+            // system clock the OS draws at the very top can't be removed by an app anyway.
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     ConnectionBadge(state: store.connection, agent: store.agentState)
@@ -52,7 +55,15 @@ struct RootView: View {
             .sheet(isPresented: $showModes) { ModeMenuView() }
             .sheet(isPresented: $showProjects) { ProjectPickerView() }
         }
+        // Orange is applied per-control (send, mic, bubbles), NOT globally — a global tint
+        // turns watchOS 26's toolbar buttons into solid orange blobs. Keep nav icons neutral.
     }
+}
+
+extension Color {
+    /// Claude's signature warm coral-orange. The single accent for the whole app,
+    /// against the watch's black background (the Claude Code look).
+    static let pinch = Color(red: 0.85, green: 0.47, blue: 0.34)   // ≈ #D9785A
 }
 
 /// The transcript + fixed composer, laid out so the composer never scrolls (double-tap
