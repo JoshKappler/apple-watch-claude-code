@@ -38,20 +38,23 @@ npm run sim                                                # or open the browser
 
 ## What needs you (the parts I can't do autonomously)
 
-1. **Anthropic API key** — to use the real agent instead of mock. `cd backend && cp .env.example .env`,
-   set `ANTHROPIC_API_KEY`, set `PINCH_PROJECTS` to the absolute path(s) of the repo(s) you want it to
-   work in, set `PINCH_MOCK=0`. (Run `./setup.sh` to scaffold `.env` + generate your `PINCH_TOKEN`.)
-2. **Xcode + your Apple Developer account** — to put the app on your Ultra. `brew install xcodegen`, then
+1. **Nothing for auth — it runs on your Claude Max subscription.** `PINCH_AUTH=subscription` is the default
+   and uses the Claude Code login already on this Mac (no API key). Verified: a real prompt round-tripped on
+   your plan with no key. Just run `./setup.sh` (generates your `PINCH_TOKEN`), set `PINCH_PROJECTS` to the
+   repo path(s) you want it editing, and `PINCH_MOCK=0`.
+2. **Xcode + your Apple Developer account** — to put the app on your Ultra. `xcodegen` is installed; run
    `cd watch && xcodegen generate && open Pinch.xcodeproj`. Set your **Team**, change the bundle id to one
    you own, Run on the watch. This Mac only has Command Line Tools (no watchOS SDK), so I couldn't compile
-   or sign it — but the source is complete, parses clean, and the protocol mirror is exact. Full details
-   in `watch/README.md`.
-3. **Cloudflare tunnel login (once)** — to get the public URL for cellular. `cloudflared login`, then
-   `cloudflared tunnel create pinch` and follow `infra/cloudflared/README.md`. Until then the browser
-   simulator works over `ws://localhost` on your LAN.
-4. **(Optional) APNs key** — to enable the "long task finished, come look" push. The watch registers and
-   posts its token to `<server>/register-push`; wiring the send side needs an APNs `.p8`. Stubbed and
-   documented in `watch/Sources/PushRegistration.swift`.
+   or sign it — but the source is complete, all 19 files pass `swiftc -parse`, and the protocol mirror is
+   exact. Full details in `watch/README.md`.
+3. **Assign the Action button → dictation (one-time, on the watch).** After the app is installed: open the
+   Shortcuts app, the "Speak a message in Pinch" App Shortcut appears; then Settings → Action Button → First
+   Press → Shortcut → pick it. Press the orange button → Pinch opens listening.
+4. **Cloudflare tunnel login (once)** — for the public cellular URL. `cloudflared` is installed; run
+   `cloudflared login`, `cloudflared tunnel create pinch`, then follow `infra/cloudflared/README.md`. Until
+   then the browser simulator works over `ws://localhost` on your LAN.
+5. **(Optional) APNs key** — to enable the "long task finished, come look" push. Stubbed and documented in
+   `watch/Sources/PushRegistration.swift`.
 
 Full from-zero walkthrough: **`docs/SETUP.md`**.
 
@@ -61,22 +64,27 @@ Full from-zero walkthrough: **`docs/SETUP.md`**.
 | Control | Action |
 |---|---|
 | **Double-tap (pinch)** | **Send message** — `.handGestureShortcut(.primaryAction)`, Ultra 2+/watchOS 11 |
-| Hold mic button | Push-to-talk dictation |
-| Digital Crown | Scroll transcript / scrub a diff |
+| **Action button** (orange) | **Start dictating** (system dictation; one-time Shortcut assignment) |
+| Tap mic button | Start dictating (same system dictation) |
+| **Digital Crown** | Scroll transcript · move text cursor in the editor · highlight menu options |
+| **Crown — rotate to confirm** | Permission gate: turn right past threshold = allow, left = deny (springs back) |
+| **Crown — pause to commit** | Mode / project menus: turn to highlight, dwell to select |
+| Swipe ← in editor | Delete the previous word |
 | **Wrist shake** | **Cancel** the in-flight turn |
-| Tap ✓ / ✗ | Approve / decline an edit or command |
-| Mode menu → bypass | "Dangerously skip permissions" (guarded confirm) |
+| Tap ✓ / ✗ · tap a row | Shortcuts that mirror the crown decision/selection |
 
-## Honest caveats (all from the research, all documented)
+## Honest caveats (all verified, all documented)
 - **Double-tap is Series 9 / Ultra 2 and later only.** On an original Ultra the on-screen Send button is
   the path (the app feature-detects and degrades).
-- **Watch TTS can be silent without AirPods/Bluetooth.** So every spoken reply is paired with a haptic,
-  and there's a speaker toggle. If you want to reliably *hear* replies, wear AirPods.
+- **No crown PRESS for apps.** watchOS reserves the crown click for the system, so "select/confirm" is
+  built from crown *rotation* (threshold + dwell), never a press. Taps are the fallback.
+- **No always-on in-app voice listener.** `SFSpeechRecognizer` doesn't function on watchOS — voice in is
+  Apple's system dictation (tap mic / press Action button → speak → text). Fully hands-free always-listening
+  would require streaming the mic to the backend for server-side STT (not built; offered as a follow-up).
+- **Watch TTS can be silent without AirPods/Bluetooth.** Every spoken reply is paired with a haptic, and
+  there's a speaker toggle. Wear AirPods to reliably *hear* replies.
 - **No background WebSocket on watchOS.** The socket lives while the app is foreground; it reconnects and
   resumes the session on reopen, and APNs is the re-engagement path for long tasks.
-- **The Action button is not used by default** — third-party Action-button support is gated behind a
-  workout/dive session model. Push-to-talk is the on-screen mic + double-tap instead. An optional
-  workout-framed intent is included but off by default for anyone who wants the physical button.
 - **Agent SDK is v0.3.x (pre-1.0).** Its surface can still move; the version is pinned. `zod` is on v4 to
   satisfy the SDK's peer dependency.
 - **This is remote code execution as a service.** The bearer token is the only thing between the public

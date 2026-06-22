@@ -65,22 +65,46 @@ auth for third-party products built on the Agent SDK. So we ship with `ANTHROPIC
 - **APNs alert push** is the re-engagement path for long tasks (a background push wakes the user to come
   look; the app reconnects in foreground). Wired as a stub — needs your Apple push key to go live.
 
-## 10. Gesture bindings — what's actually exposed
-- **Double-tap = send.** Real dev API `.handGestureShortcut(.primaryAction)`, **watchOS 11+ and Ultra 2+
-  only**. We feature-detect; on Ultra 1 / older watchOS the on-screen Send button is the path. Only one
-  primary action per screen, and it can't live inside a scrolling List (the system claims double-tap for
-  scroll there) — so Send lives on a fixed bottom bar.
-- **Digital Crown = scroll** transcript / scrub diff hunks (`.digitalCrownRotation`). Crown *press* is
-  system-reserved (can't intercept) — not used for app logic.
-- **Wrist shake = cancel.** No public shake event on watchOS; we detect it with CoreMotion
-  `userAcceleration` magnitude over a threshold with debounce (foreground only).
-- **Push-to-talk = on-screen mic button** (hold) using `SFSpeechRecognizer` + `AVAudioEngine`. The
-  **Action button is NOT used** for this by default: third-party Action-button support is gated behind a
-  workout/dive session model, which we won't masquerade as. (An optional workout-framed intent is
-  documented for power users who want the physical button.)
-- **Taps = approve/decline** permission cards, pick projects, toggle mode.
+## 10. Gesture bindings — what's actually exposed (revised after a second verification pass)
+The crown is the most versatile input, so we lean on it for everything except send. Two hard platform
+facts shaped this and overturned earlier assumptions:
+  - **The Digital Crown PRESS cannot be intercepted by any app** (Apple HIG: the press is reserved for
+    Home/Siri/Apple Pay). So crown *rotation* is our only crown signal, and "select/confirm" is built from
+    rotation, never a press.
+  - **`SFSpeechRecognizer` does NOT function on watchOS** (verified — it compiles but there's no recognizer
+    behind it; `AVAudioEngine` mic-tap and the new `SpeechAnalyzer` are also unavailable on the watch). The
+    only working on-watch voice input is **Apple's system dictation**.
+
+- **Double-tap = send.** `.handGestureShortcut(.primaryAction)`, **watchOS 11+ / Ultra 2+ only** (feature-
+  detected; on-screen Send is the fallback). One primary action per screen, outside any ScrollView → Send
+  lives on a fixed bottom bar.
+- **Digital Crown = scroll · cursor · select.** Rotation scrolls the transcript; in the caret editor it
+  moves the text cursor a character at a time (the "arrow keys"); in menus it highlights options. Confirm is
+  rotation-based: **`CrownConfirm`** (rotate past a threshold → allow/deny on the permission gate, springs
+  back if you stop short; high-risk needs a bigger throw) and **`CrownPicker`** (rotate to highlight, pause
+  to commit via a dwell ring) for the mode and project menus.
+- **Wrist shake = cancel.** CoreMotion `userAcceleration` magnitude over a threshold with debounce
+  (foreground only).
+- **Voice in = Apple system dictation**, presented programmatically via
+  `WKApplication.visibleInterfaceController.presentTextInputController` (the only code-triggerable path;
+  `TextFieldLink`/`TextField` are tap-only). The on-screen mic and the Action button share it. On watchOS 11
+  the input reopens to the last-used method, so a dictation user lands straight in the live mic.
+- **Action button (Ultra) = start dictation.** It's the one programmable physical button. Bound via the
+  **Shortcuts path** (Settings → Action Button → Shortcut → the "Speak a message in Pinch" App Shortcut),
+  which runs `StartDictationIntent` (`openAppWhenRun`) → `DictationRouter` → the app presents dictation. The
+  direct (non-Shortcut) Action-button slot is still gated to workout/dive intents, so Shortcuts it is.
+- **Back-swipe (right-to-left) = delete previous word** in the caret editor; the editor is a sheet (not a
+  NavigationStack push) so this doesn't fight the un-suppressible system edge-swipe-to-go-back.
+- **Taps** still work everywhere as shortcuts (✓/✗ on the permission card, tap a menu row, tap the draft to
+  edit) — the crown is primary, taps are the accelerator.
 - TTS readback via `AVSpeechSynthesizer`, **always paired with a haptic** because watch TTS can be silent
   without AirPods connected.
+
+## 10a. Anthropic auth: Claude Max subscription by default
+`PINCH_AUTH=subscription` (the default) uses the Claude Code login already on the Mac (keychain) — no API
+key. Verified working end-to-end (a real prompt round-tripped on the subscription with no key). `PINCH_AUTH=
+apikey` keeps the `ANTHROPIC_API_KEY` path. Subscription mode scrubs any stray/empty key from the env so it
+can't override the keychain login.
 
 ## 11. A browser "watch simulator" is part of the build
 Because there's no web runtime on watchOS and signing/installing the real app needs your Apple Developer
