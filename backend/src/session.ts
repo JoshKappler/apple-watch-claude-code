@@ -114,6 +114,12 @@ export class ClaudeSession implements AgentSession {
     | null = null;
   private started = false;
   private _sessionId: string | undefined;
+  /**
+   * Tool names the user chose "Always allow" for — auto-approved for the rest of this session
+   * (granularity is per tool NAME: allowing one Edit allows all Edits until the session ends).
+   * In-memory only, so a fresh session starts asking again.
+   */
+  private readonly rememberedTools = new Set<string>();
 
   constructor(deps: SessionDeps) {
     this.deps = deps;
@@ -255,6 +261,11 @@ export class ClaudeSession implements AgentSession {
         return { behavior: "allow", updatedInput: input };
       }
 
+      // "Always allow" chosen earlier this session for this tool → auto-approve, don't ask again.
+      if (this.rememberedTools.has(toolName)) {
+        return { behavior: "allow", updatedInput: input };
+      }
+
       const meta = permissionMeta(toolName, input);
       const { requestId, wait } = this.deps.approvals.create();
 
@@ -294,6 +305,8 @@ export class ClaudeSession implements AgentSession {
         // `updatedInput: input` is REQUIRED — an allow without it makes the SDK
         // run the tool with empty input, so Edit/Write/Bash silently no-op.
         if (outcome.decision === "allow") {
+          // "Always allow" → remember this tool so the rest of the session won't re-ask.
+          if (outcome.remember) this.rememberedTools.add(toolName);
           return { behavior: "allow", updatedInput: input };
         }
         return {

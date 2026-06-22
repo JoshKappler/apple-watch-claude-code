@@ -65,7 +65,12 @@ export function thinkingConfig(level: ThinkingLevel): SdkThinkingConfig {
 export interface ApprovalGate {
   create(): {
     requestId: string;
-    wait: Promise<{ decision: "allow" | "deny"; note?: string }>;
+    wait: Promise<{
+      decision: "allow" | "deny";
+      note?: string;
+      /** "Always allow": auto-approve future calls of this tool for the session. */
+      remember?: boolean;
+    }>;
   };
   cancelAll(note?: string): void;
 }

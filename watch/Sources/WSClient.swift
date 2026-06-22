@@ -526,6 +526,16 @@ final class WSClient: NSObject, @unchecked Sendable {
         // had previously degraded to "reconnecting", announce the single recovery (.ready).
         notePollSuccess()
 
+        // Ring-buffer gap: the backend trimmed events our cursor never reached, so some updates
+        // are gone. Surface a one-shot notice (delivered OUTSIDE the indexed event loop so it
+        // doesn't perturb the high-water/appliedHighWater math). Fires once — the cursor advances
+        // to the high-water below, so the next poll won't be behind the trim point.
+        if (json["gap"] as? Bool) == true {
+            await MainActor.run { [weak self] in
+                self?.onMessage?(.notice(level: .warn, message: "Some updates were missed while offline."))
+            }
+        }
+
         let highWater = json["cursor"] as? Int
         let rawEvents = (json["events"] as? [Any]) ?? []
 

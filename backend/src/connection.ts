@@ -244,6 +244,7 @@ export class Connection {
     const ok = state.approvals.decide(msg.requestId, {
       decision: msg.decision,
       note: msg.note,
+      remember: msg.remember,
     });
     if (!ok) log.debug({ requestId: msg.requestId }, "stale permission decision");
   }

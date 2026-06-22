@@ -13,6 +13,8 @@ export interface ApprovalOutcome {
   decision: "allow" | "deny";
   /** Optional note from the user (forwarded to the SDK deny message). */
   note?: string;
+  /** "Always allow": auto-approve future calls of this tool for the rest of the session. */
+  remember?: boolean;
 }
 
 interface Pending {

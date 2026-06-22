@@ -136,15 +136,22 @@ export function pushEvent(state: SessionState, msg: ServerMsg): void {
 export function readEvents(
   state: SessionState,
   cursor: number,
-): { cursor: number; events: ServerMsg[] } {
+): { cursor: number; events: ServerMsg[]; gap: boolean } {
   const events: ServerMsg[] = [];
+  // Gap detection: if the client's cursor is BELOW the oldest index still retained in the ring
+  // buffer, the events between them were trimmed and are gone forever. Without a signal the client
+  // would jump its cursor to nextIndex and skip them SILENTLY. Flag it so the watch can surface
+  // "some updates were missed". (cursor > 0 excludes a fresh from-zero client, which has no
+  // history to miss.)
+  const oldestRetained = state.eventLog[0]?.index;
+  const gap = cursor > 0 && oldestRetained !== undefined && cursor < oldestRetained;
   // Up-to-date (or ahead-of-log) client: return nothing, just the high-water.
   if (cursor < state.nextIndex) {
     for (const e of state.eventLog) {
       if (e.index >= cursor) events.push(e.msg);
     }
   }
-  return { cursor: state.nextIndex, events };
+  return { cursor: state.nextIndex, events, gap };
 }
 
 /**

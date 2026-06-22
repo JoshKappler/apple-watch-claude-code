@@ -336,8 +336,8 @@ function handlePoll(url: URL, res: ServerResponse): void {
   const cursorParam = url.searchParams.get("cursor");
   const parsed = cursorParam !== null ? Number.parseInt(cursorParam, 10) : 0;
   const cursor = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
-  const { cursor: hi, events } = readEvents(state, cursor);
-  sendJson(res, 200, { cursor: hi, events });
+  const { cursor: hi, events, gap } = readEvents(state, cursor);
+  sendJson(res, 200, { cursor: hi, events, gap });
 }
 
 /** POST /api/decision → resolve a parked permission request. */
@@ -355,7 +355,8 @@ async function handleDecision(
     return;
   }
   const note = asString(body.note);
-  const ok = state.approvals.decide(requestId, { decision, note });
+  const remember = body.remember === true;
+  const ok = state.approvals.decide(requestId, { decision, note, remember });
   if (!ok) log.debug({ requestId }, "stale permission decision (http)");
   sendJson(res, 200, { ok: true });
 }
