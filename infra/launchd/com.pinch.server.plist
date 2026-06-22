@@ -46,11 +46,17 @@
     <key>ThrottleInterval</key>
     <integer>10</integer>
 
-    <!-- Make PATH sane for child processes (git, etc.) without a login shell. -->
+    <!-- Make PATH sane for child processes (git, etc.) without a login shell.
+         NODE_ENV=production is REQUIRED under launchd: in dev the logger uses a
+         pino-pretty transport (a worker thread) that hangs in launchd's no-TTY
+         environment, wedging the process before it binds the port. Production
+         mode logs plain JSON to stdout (server.out.log) with no worker thread. -->
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>NODE_ENV</key>
+        <string>production</string>
     </dict>
 
     <key>StandardOutPath</key>
