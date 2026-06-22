@@ -28,7 +28,6 @@ struct RootView: View {
             }
             .animation(.snappy, value: store.pendingPermission)
             .navigationTitle("Pinch")
-            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     ConnectionBadge(state: store.connection, agent: store.agentState)

@@ -27,7 +27,7 @@ struct ProjectPickerView: View {
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "folder.fill")
-                            .foregroundStyle(.accent)
+                            .foregroundStyle(Color.accentColor)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(project.name)
                                 .font(.system(size: 14, weight: .medium))

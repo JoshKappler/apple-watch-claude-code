@@ -38,6 +38,11 @@ struct ComposerView: View {
         connected && !outgoing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// A turn is in flight — show the on-screen cancel affordance.
+    private var isBusy: Bool {
+        store.agentState == .thinking || store.agentState == .running_tool || store.agentState == .waiting_permission
+    }
+
     var body: some View {
         VStack(spacing: 4) {
             // Live preview of what will be sent (mic transcript or typed draft).
@@ -56,6 +61,12 @@ struct ComposerView: View {
                 SendButton(enabled: canSend) { sendNow() }
                 Menu {
                     Button("Type instead") { showDictation = true }
+                    // On-screen cancel mirrors the wrist-shake, for when shake is awkward.
+                    if isBusy {
+                        Button("Cancel turn", systemImage: "stop.circle", role: .destructive) {
+                            store.cancel()
+                        }
+                    }
                     Button("Clear", role: .destructive) { clear() }
                 } label: {
                     Image(systemName: "ellipsis")
@@ -161,9 +172,8 @@ private struct DictationSheet: View {
             Text("Dictate or scribble")
                 .font(.headline)
             // The watch presents dictation/scribble for any TextField.
-            TextField("Message", text: $text, axis: .vertical)
-                .lineLimit(1...4)
-                .textInputAutocapitalization(.sentences)
+            TextField("Message", text: $text)
+                .lineLimit(3)
             Button("Send", action: onDone)
                 .buttonStyle(.borderedProminent)
                 .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

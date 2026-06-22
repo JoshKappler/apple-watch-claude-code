@@ -20,7 +20,6 @@ struct SettingsView: View {
             Section("Pairing") {
                 // Watch TextFields invoke dictation/scribble; paste from the paired phone also works.
                 TextField("Server URL", text: $serverURL)
-                    .textContentType(.URL)
                     .font(.system(size: 13))
                 SecureField("Pairing token", text: $token)
                     .font(.system(size: 13))

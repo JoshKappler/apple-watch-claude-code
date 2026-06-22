@@ -11,6 +11,11 @@
 //     resumeSessionId captured from the last `ready`.
 //   • Re-arm `receive` after every message; surface decoded ServerMsg via a callback.
 //
+//  Threading: all internal state is touched only on `queue` (a private serial queue).
+//  The URLSession delegate callbacks and the receive completion handlers are funneled
+//  onto it, and public entry points hop onto it too. The two callbacks fire on the
+//  main actor for the SwiftUI Store. This keeps the class data-race-free.
+//
 //  Foreground-only by design: watchOS reclaims the socket on suspend. The Store
 //  connects on scenePhase .active and disconnects on background.
 //
@@ -27,11 +32,10 @@ enum ConnectionState: Equatable, Sendable {
     case failed(String)     // fatal (bad token / version) — needs user action
 }
 
-/// Owns the socket lifecycle. Not @MainActor: it runs its own async loops and
-/// hops to the main actor only via the two callbacks below.
+/// Owns the socket lifecycle. State is confined to `queue`; callbacks hop to main.
 final class WSClient: NSObject, @unchecked Sendable {
 
-    // Configuration, set before connect().
+    // Configuration (only mutated on `queue`).
     private var serverURL: URL
     private var token: String
     private let deviceId: String
@@ -51,6 +55,15 @@ final class WSClient: NSObject, @unchecked Sendable {
     private var reconnectAttempt = 0
     private var shouldStayConnected = false
     private var reconnectTask: Task<Void, Never>?
+    /// True once we've received `ready` at least once on the current credentials.
+    /// If we never reach ready after several tries, it's almost certainly a bad token /
+    /// version mismatch (watchOS can't read the 4401/4426 numeric close code from the
+    /// CloseCode enum), so we stop hammering and surface a .failed state.
+    private var everReachedReady = false
+    private let maxColdAttempts = 4
+
+    /// Serial queue that confines all internal state mutation.
+    private let queue = DispatchQueue(label: "com.josh.pinch.ws")
 
     init(serverURL: URL, token: String, deviceId: String) {
         self.serverURL = serverURL
@@ -60,37 +73,56 @@ final class WSClient: NSObject, @unchecked Sendable {
         let config = URLSessionConfiguration.default
         config.waitsForConnectivity = true
         config.timeoutIntervalForRequest = 30
-        // delegate gives us didOpen / didClose for clean state transitions.
-        self.session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
+        // Run delegate callbacks on our serial queue so they're serialized with everything else.
+        let opQueue = OperationQueue()
+        opQueue.underlyingQueue = queue
+        opQueue.maxConcurrentOperationCount = 1
+        self.session = URLSession(configuration: config, delegate: self, delegateQueue: opQueue)
     }
 
     /// Update credentials/URL (from Settings). Caller should reconnect() after.
     func configure(serverURL: URL, token: String) {
-        self.serverURL = serverURL
-        self.token = token
+        queue.async {
+            // New credentials → give them a fresh shot at reaching ready.
+            if self.serverURL != serverURL || self.token != token {
+                self.everReachedReady = false
+            }
+            self.serverURL = serverURL
+            self.token = token
+        }
     }
 
     // MARK: - Lifecycle
 
     func connect() {
-        shouldStayConnected = true
-        reconnectTask?.cancel()
-        openSocket()
+        queue.async {
+            self.shouldStayConnected = true
+            self.reconnectTask?.cancel()
+            self.openSocket()
+        }
     }
 
     func disconnect() {
-        shouldStayConnected = false
-        reconnectTask?.cancel()
-        reconnectTask = nil
-        teardownSocket(notify: true)
+        queue.async {
+            self.shouldStayConnected = false
+            self.reconnectTask?.cancel()
+            self.reconnectTask = nil
+            self.teardownSocket(notify: true)
+        }
     }
 
     /// Force a fresh attempt now (e.g. user tapped "reconnect" or settings changed).
     func reconnectNow() {
-        teardownSocket(notify: false)
-        reconnectAttempt = 0
-        if shouldStayConnected { openSocket() }
+        queue.async {
+            self.shouldStayConnected = true
+            self.everReachedReady = false   // user asked to retry — clear the cold-attempt latch.
+            self.teardownSocket(notify: false)
+            self.reconnectAttempt = 0
+            self.openSocket()
+        }
     }
+
+    // All `private` methods below assume they run on `queue`.
 
     private func openSocket() {
         teardownSocket(notify: false)
@@ -140,20 +172,20 @@ final class WSClient: NSObject, @unchecked Sendable {
 
     private func sendAuth() {
         let msg = ClientMsg.auth(token: token, deviceId: deviceId, resumeSessionId: resumeSessionId)
-        send(msg)
+        sendRaw(msg)
         emit(.connected)
     }
 
     private func receiveLoop() {
         guard let task, receiveLoopActive else { return }
         task.receive { [weak self] result in
+            // Completion runs on `queue` (the session's delegate/underlying queue).
             guard let self else { return }
             switch result {
             case let .success(message):
                 self.handle(message)
                 self.receiveLoop()      // re-arm for the next frame
             case let .failure(error):
-                // Socket died — schedule a reconnect (unless we're tearing down on purpose).
                 if self.receiveLoopActive {
                     self.handleSocketDrop(error)
                 }
@@ -171,14 +203,14 @@ final class WSClient: NSObject, @unchecked Sendable {
         guard let data else { return }
 
         guard let decoded = try? JSONDecoder().decode(ServerMsg.self, from: data) else {
-            // Malformed frame — ignore (don't kill the loop).
-            return
+            return  // malformed frame — ignore (don't kill the loop).
         }
 
         // Capture sessionId for resume; flip to .ready; clear backoff on success.
         if case let .ready(ready) = decoded {
             resumeSessionId = ready.sessionId
             reconnectAttempt = 0
+            everReachedReady = true
             startHeartbeat()
             emit(.ready)
         }
@@ -188,7 +220,12 @@ final class WSClient: NSObject, @unchecked Sendable {
 
     // MARK: - Sending
 
+    /// Public send — marshals onto `queue` so it's serialized with the socket lifecycle.
     func send(_ msg: ClientMsg) {
+        queue.async { self.sendRaw(msg) }
+    }
+
+    private func sendRaw(_ msg: ClientMsg) {
         guard let task else { return }
         guard let json = try? msg.jsonString() else { return }
         task.send(.string(json)) { _ in /* best-effort; drops surface via receive failure */ }
@@ -218,6 +255,16 @@ final class WSClient: NSObject, @unchecked Sendable {
     private func scheduleReconnect() {
         reconnectAttempt += 1
         let attempt = reconnectAttempt
+
+        // If we keep dropping before ever reaching `ready`, it's almost certainly auth /
+        // version (we can't read the 4401/4426 numeric close code on watchOS). Stop retrying
+        // and tell the user to check their token, rather than hammering forever.
+        if !everReachedReady && attempt > maxColdAttempts {
+            shouldStayConnected = false
+            emit(.failed("Can't authenticate — check the server URL and token."))
+            return
+        }
+
         emit(.reconnecting(attempt: attempt))
 
         // base 0.8s, doubling, capped at 30s, plus up to ±30% jitter.
@@ -228,8 +275,11 @@ final class WSClient: NSObject, @unchecked Sendable {
         reconnectTask?.cancel()
         reconnectTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            guard let self, !Task.isCancelled, self.shouldStayConnected else { return }
-            self.openSocket()
+            guard let self, !Task.isCancelled else { return }
+            self.queue.async {
+                guard self.shouldStayConnected else { return }
+                self.openSocket()
+            }
         }
     }
 
@@ -241,6 +291,7 @@ final class WSClient: NSObject, @unchecked Sendable {
 // MARK: - URLSessionWebSocketDelegate
 
 extension WSClient: URLSessionWebSocketDelegate {
+    // These fire on `queue` (the session's underlying queue), so they're already serialized.
     func urlSession(_ session: URLSession,
                     webSocketTask: URLSessionWebSocketTask,
                     didOpenWithProtocol protocol: String?) {

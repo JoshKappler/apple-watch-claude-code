@@ -103,7 +103,6 @@ private struct AssistantBubble: View {
                 .font(.system(size: 14))
                 .padding(.horizontal, 10).padding(.vertical, 6)
                 .background(Color.gray.opacity(0.22), in: .rect(cornerRadius: 12))
-                .textSelection(.enabled)
             Spacer(minLength: 0)
         }
     }
