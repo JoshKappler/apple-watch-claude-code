@@ -71,7 +71,7 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.navigationLink)
 
-                Text("Higher thinking levels let the agent reason longer before answering. Off is fastest.")
+                Text("Thinking sets the agent's extended-reasoning budget — how long it reasons before answering. Higher is more thorough but slower; Off is fastest.")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }

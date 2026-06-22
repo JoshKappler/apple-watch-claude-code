@@ -176,6 +176,7 @@ enum ServerMsg: Sendable {
     case turnComplete(stopReason: StopReason)
     case notice(level: NoticeLevel, message: String)
     case error(message: String, fatal: Bool)
+    case context(used: Int, window: Int)
     case pong(t: Double?)
     case unknown(type: String)
 
@@ -229,6 +230,7 @@ extension ServerMsg: Decodable {
         case id, name, title, subtitle, ok, summary
         case requestId, tool, risk, kind, diff, command
         case stopReason, level, message, fatal, t
+        case used, window
     }
 
     init(from decoder: Decoder) throws {
@@ -306,6 +308,12 @@ extension ServerMsg: Decodable {
             self = .error(
                 message: try c.decode(String.self, forKey: .message),
                 fatal: try c.decodeIfPresent(Bool.self, forKey: .fatal) ?? false
+            )
+
+        case "context":
+            self = .context(
+                used: try c.decode(Int.self, forKey: .used),
+                window: try c.decode(Int.self, forKey: .window)
             )
 
         case "pong":

@@ -32,9 +32,9 @@ enum ThinkingLevel: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .off: return "Off"
-        case .low: return "Think"
-        case .medium: return "Think hard"
-        case .high: return "Ultrathink"
+        case .low: return "Low"
+        case .medium: return "Medium"
+        case .high: return "High"
         }
     }
 }
@@ -74,6 +74,17 @@ final class PinchStore: ObservableObject {
     @Published var sessionId: String?
     @Published var currentProject: ProjectRef?
     @Published var models: [String] = []
+
+    // Context-window occupancy for the usage ring around the gear icon. Set by `context`
+    // frames the backend emits each turn from the model's token usage; reset on a fresh session.
+    @Published var contextUsed = 0
+    @Published var contextWindow = 0
+
+    /// 0…1 fill for the ring. 0 when there's no reading yet (the ring stays hidden).
+    var contextFraction: Double {
+        guard contextWindow > 0 else { return 0 }
+        return min(1, max(0, Double(contextUsed) / Double(contextWindow)))
+    }
 
     // Conversation.
     @Published var transcript: [TranscriptItem] = []
@@ -388,6 +399,10 @@ final class PinchStore: ObservableObject {
             models = ready.models ?? []
             if ready.resumed {
                 appendNotice("Reconnected — session resumed.", warn: false)
+            } else {
+                // Brand-new session → empty context until the first turn reports usage.
+                contextUsed = 0
+                contextWindow = 0
             }
             if wantProjects {
                 wantProjects = false
@@ -457,6 +472,10 @@ final class PinchStore: ObservableObject {
             appendNotice(message, warn: true)
             Haptics.failure()
             if fatal { connection = .failed(message) }
+
+        case let .context(used, window):
+            contextUsed = used
+            contextWindow = window
 
         case .pong:
             break   // heartbeat ack; nothing to do.

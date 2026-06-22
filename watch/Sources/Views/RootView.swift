@@ -54,8 +54,15 @@ struct RootView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: {
                         Image(systemName: "gearshape")
+                            // Context-window usage rides as a thin ring AROUND the gear (a
+                            // horizontal bar can't live between the toolbar items on watchOS —
+                            // no center region under the clock). Fills clockwise from the top,
+                            // green→red along the arc. Hidden until there's a reading.
+                            .overlay { ContextRing(fraction: store.contextFraction) }
                     }
-                    .accessibilityLabel("Settings")
+                    .accessibilityLabel(store.contextWindow > 0
+                        ? "Settings. Context \(Int((store.contextFraction * 100).rounded())) percent full."
+                        : "Settings")
                 }
             }
             .sheet(isPresented: $showSettings) { SettingsView() }
@@ -70,6 +77,41 @@ extension Color {
     /// Claude's signature warm coral-orange. The single accent for the whole app,
     /// against the watch's black background (the Claude Code look).
     static let pinch = Color(red: 0.85, green: 0.47, blue: 0.34)   // ≈ #D9785A
+}
+
+/// Thin context-window usage ring that wraps the gear icon. Fills CLOCKWISE from 12 o'clock
+/// as the conversation fills the model's context window, its color sweeping green→amber→red
+/// along the arc. Sized just OUTSIDE the gear glyph so it never covers it; hidden at 0.
+private struct ContextRing: View {
+    let fraction: Double   // 0…1
+
+    var body: some View {
+        if fraction <= 0 {
+            EmptyView()
+        } else {
+            ZStack {
+                // Faint full-circle track so the "remaining" portion still reads as a ring.
+                Circle()
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1.6)
+                // Filled arc — trimmed to the fill amount, swept green→red along its length.
+                Circle()
+                    .trim(from: 0, to: CGFloat(min(max(fraction, 0.03), 1)))
+                    .stroke(
+                        AngularGradient(
+                            gradient: Gradient(colors: [.green, .yellow, .orange, .red]),
+                            center: .center,
+                            startAngle: .degrees(0),
+                            endAngle: .degrees(360)
+                        ),
+                        style: StrokeStyle(lineWidth: 1.8, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))   // move the start to 12 o'clock
+            }
+            .frame(width: 26, height: 26)
+            .allowsHitTesting(false)
+            .animation(.easeOut(duration: 0.4), value: fraction)
+        }
+    }
 }
 
 /// The transcript + fixed composer, laid out so the composer never scrolls (double-tap

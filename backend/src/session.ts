@@ -370,7 +370,13 @@ export class ClaudeSession implements AgentSession {
 
   /** Whole assistant message: text blocks (TTS) + tool_use blocks. */
   private handleAssistant(m: Record<string, unknown>): void {
-    const message = m.message as { content?: unknown } | undefined;
+    const message = m.message as
+      | { content?: unknown; usage?: Record<string, unknown> }
+      | undefined;
+    // Report context-window occupancy for the watch's usage ring. An assistant
+    // message's `usage.input_tokens` (+ cached tokens) is the size of THIS request's
+    // input — i.e. how full the context window currently is.
+    this.reportContext(message?.usage);
     const content = message?.content;
     if (!Array.isArray(content)) return;
     for (const block of content as Array<Record<string, unknown>>) {
@@ -394,6 +400,23 @@ export class ClaudeSession implements AgentSession {
         );
       }
     }
+  }
+
+  /**
+   * Emit a context-occupancy frame from an assistant message's usage block. Sums the
+   * input + cached input tokens (the full prompt size for that request) against the
+   * model's context window. No-ops when usage is missing or zero.
+   */
+  private reportContext(usage: Record<string, unknown> | undefined): void {
+    if (!usage) return;
+    const n = (k: string): number =>
+      typeof usage[k] === "number" ? (usage[k] as number) : 0;
+    const used =
+      n("input_tokens") +
+      n("cache_read_input_tokens") +
+      n("cache_creation_input_tokens");
+    if (used <= 0) return;
+    this.deps.send(srv.context(used, contextWindowFor(this.model)));
   }
 
   /** user message carrying tool_result blocks. */
@@ -426,6 +449,22 @@ export class ClaudeSession implements AgentSession {
           : "error";
     this.deps.send(srv.turnComplete(stop));
     this.deps.send(srv.status("idle"));
+  }
+}
+
+/**
+ * Context-window size (tokens) for a model id, used to scale the watch's usage ring.
+ * The 4.x family ships a 200k window by default (Sonnet's 1M is an opt-in beta we don't
+ * enable), so 200k is the right denominator for "how full is the context."
+ */
+function contextWindowFor(model: string): number {
+  switch (model) {
+    case "claude-opus-4-8":
+    case "claude-sonnet-4-6":
+    case "claude-haiku-4-5-20251001":
+    case "claude-fable-5":
+    default:
+      return 200_000;
   }
 }
 

@@ -32,6 +32,8 @@ export class MockSession implements AgentSession {
   private cancelled = false;
   private running = false;
   private turn = 0;
+  /** Fake running context occupancy so the watch's usage ring fills across turns. */
+  private contextUsed = 12_000;
   readonly sessionId: string;
 
   constructor(deps: SessionDeps) {
@@ -79,6 +81,9 @@ export class MockSession implements AgentSession {
 
     try {
       this.deps.send(srv.status("thinking"));
+      // Grow fake context occupancy each turn so the watch's usage ring visibly fills.
+      this.contextUsed = Math.min(this.contextUsed + 23_000, 200_000);
+      this.deps.send(srv.context(this.contextUsed, 200_000));
       this.deps.send(srv.thinkingDelta("Looking at the settings page…"));
       await sleep(400);
       if (this.bail()) return;

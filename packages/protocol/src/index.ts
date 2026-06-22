@@ -187,6 +187,17 @@ export const ErrorMsg = z.object({
   fatal: z.boolean().optional(),
 });
 
+/**
+ * Context-window occupancy for the watch's usage ring. `used` is the size of the
+ * most recent request's input (prompt + system + cached tokens) — i.e. how much of
+ * the window the conversation currently fills; `window` is the model's context limit.
+ */
+export const ContextMsg = z.object({
+  type: z.literal("context"),
+  used: z.number().int().nonnegative(),
+  window: z.number().int().positive(),
+});
+
 export const PongMsg = z.object({
   type: z.literal("pong"),
   t: z.number().optional(),
@@ -206,6 +217,7 @@ export const ServerMsg = z.discriminatedUnion("type", [
   TurnCompleteMsg,
   NoticeMsg,
   ErrorMsg,
+  ContextMsg,
   PongMsg,
 ]);
 export type ServerMsg = z.infer<typeof ServerMsg>;
@@ -263,5 +275,7 @@ export const srv = {
     ({ type: "notice", level, message }) satisfies z.infer<typeof NoticeMsg>,
   error: (message: string, fatal = false) =>
     ({ type: "error", message, fatal }) satisfies z.infer<typeof ErrorMsg>,
+  context: (used: number, window: number) =>
+    ({ type: "context", used, window }) satisfies z.infer<typeof ContextMsg>,
   pong: (t?: number) => ({ type: "pong", t }) satisfies z.infer<typeof PongMsg>,
 };
