@@ -133,10 +133,17 @@ struct SettingsView: View {
             }
 
             Section {
+                Button("Clear context", role: .destructive) {
+                    store.clearContext()
+                    dismiss()
+                }
                 Button("Clear transcript", role: .destructive) {
                     store.clearTranscript()
                     dismiss()
                 }
+                Text("Clear context starts a fresh Claude session — a new conversation with no memory of the previous one. Clear transcript only wipes the on-watch history.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
             }
         }
         .navigationTitle("Settings")

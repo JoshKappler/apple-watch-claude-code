@@ -255,6 +255,13 @@ final class PinchStore: ObservableObject {
         ws?.reconnectNow()
     }
 
+    /// Clear context — wipe the on-watch transcript AND start a fresh Claude session
+    /// (drops the resumed context so the next turn starts with an empty conversation).
+    func clearContext() {
+        clearTranscript()
+        ws?.newSession()
+    }
+
     // MARK: - Intents (called by views)
 
     /// SEND — the double-tap / Send-button action. Adds the user bubble and ships a prompt.

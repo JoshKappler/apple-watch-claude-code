@@ -210,6 +210,21 @@ final class WSClient: NSObject, @unchecked Sendable {
         }
     }
 
+    /// Clear context: forget the resumed session and start a brand-new Claude conversation.
+    /// Nulling `resumeSessionId` (its didSet also clears UserDefaults, so it won't resurrect on
+    /// relaunch) makes the next /api/session create a FRESH context; openSession then resets
+    /// pollCursor/appliedHighWater to 0 so the new session's events flow from the start.
+    func newSession() {
+        queue.async {
+            self.shouldStayConnected = true
+            self.everReachedReady = false
+            self.resumeSessionId = nil
+            self.teardown(notify: false)
+            self.reconnectAttempt = 0
+            self.openSession()
+        }
+    }
+
     // All `private` methods below assume they run on `queue`.
 
     /// "Connect" == POST /api/session. Emits .connecting while in flight; on success stores +
