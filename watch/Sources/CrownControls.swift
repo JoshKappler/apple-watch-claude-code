@@ -117,66 +117,91 @@ struct CrownPicker<Item: Identifiable>: View {
     let items: [Item]
     let title: (Item) -> String
     var subtitle: ((Item) -> String?)? = nil
-    /// Index pre-selected when the picker appears (e.g. the current mode).
+    /// Index pre-selected when the picker appears (e.g. the current project).
     var initialIndex: Int = 0
-    /// Seconds the highlight must dwell on a row before it auto-commits.
-    var dwell: Double = 0.65
+    /// Verb shown on the confirm bar before the highlighted item's name (e.g. "Open").
+    var confirmVerb: String = "Select"
     let onCommit: (Item) -> Void
 
     @State private var value = 0.0
     @State private var index = 0
-    @State private var progress = 0.0       // 0...1 dwell ring fill
-    @State private var hasMoved = false     // don't auto-commit before any interaction
-    @State private var dwellTask: Task<Void, Never>?
     @FocusState private var focused: Bool
 
     var body: some View {
-        VStack(spacing: 6) {
-            ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
-                row(item, selected: i == index)
-                    .contentShape(Rectangle())
-                    .onTapGesture { commit(at: i) }   // tap = instant commit shortcut
+        VStack(spacing: 4) {
+            // The crown HIGHLIGHTS rows and SCROLLS the highlight into view (same model as the
+            // edit-mode caret) — so the selection is always visible even when the list overflows.
+            // It no longer auto-commits; you confirm explicitly below.
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    VStack(spacing: 6) {
+                        ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
+                            row(item, selected: i == index)
+                                .id(i)
+                                .contentShape(Rectangle())
+                                .onTapGesture { select(i) }   // tap a row to highlight it
+                        }
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                }
+                .frame(maxHeight: .infinity)   // take the space above the confirm bar
+                .focusable(true)
+                .focused($focused)
+                .digitalCrownRotation(
+                    $value, from: 0, through: Double(max(items.count - 1, 0)), by: nil,
+                    sensitivity: .low, isContinuous: false, isHapticFeedbackEnabled: false
+                )
+                .onChange(of: value) { _, v in
+                    let clamped = min(max(Int(v.rounded()), 0), max(items.count - 1, 0))
+                    if clamped != index {
+                        index = clamped
+                        WKInterfaceDevice.current().play(.click)   // per-row tick
+                        withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(index, anchor: .center) }
+                    }
+                }
+                .onChange(of: index) { _, i in
+                    withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(i, anchor: .center) }
+                }
+                .onAppear {
+                    index = min(max(initialIndex, 0), max(items.count - 1, 0))
+                    value = Double(index)
+                    focused = true
+                    proxy.scrollTo(index, anchor: .center)
+                }
+            }
+
+            // CONFIRM the highlighted row. Lives OUTSIDE the ScrollView on purpose: a
+            // .handGestureShortcut(.primaryAction) inside a ScrollView/List doesn't receive the
+            // hardware double-pinch, so this fixed bar carries it. Tap it OR double-pinch to open.
+            if items.indices.contains(index) {
+                Button { commit(at: index) } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                        Text("\(confirmVerb) \(title(items[index]))")
+                            .font(.system(size: 13, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 34)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.pinch)
+                .handGestureShortcut(.primaryAction)
+                .padding(.horizontal, 6)
+                .padding(.bottom, 2)
+                .accessibilityLabel("\(confirmVerb) \(title(items[index]))")
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, 6)
-        .focusable(true)
-        .focused($focused)
-        .digitalCrownRotation(
-            $value, from: 0, through: Double(max(items.count - 1, 0)), by: nil,
-            sensitivity: .low, isContinuous: false, isHapticFeedbackEnabled: false
-        )
-        .onChange(of: value) { _, v in
-            let clamped = min(max(Int(v.rounded()), 0), max(items.count - 1, 0))
-            if clamped != index {
-                index = clamped
-                hasMoved = true
-                WKInterfaceDevice.current().play(.click)   // per-row tick
-            }
-            scheduleDwell()
-        }
-        .onAppear {
-            index = min(max(initialIndex, 0), max(items.count - 1, 0))
-            value = Double(index)
-            focused = true
-        }
     }
 
     @ViewBuilder
     private func row(_ item: Item, selected: Bool) -> some View {
         HStack(spacing: 6) {
-            ZStack {
-                if selected {
-                    Circle()
-                        .trim(from: 0, to: progress)
-                        .stroke(Color.green, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                        .frame(width: 16, height: 16)
-                }
-                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .font(.system(size: 12))
-                    .foregroundStyle(selected ? .green : .secondary)
-            }
+            Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                .font(.system(size: 12))
+                .foregroundStyle(selected ? Color.pinch : .secondary)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title(item))
                     .font(.system(size: 14, weight: selected ? .semibold : .regular))
@@ -189,25 +214,19 @@ struct CrownPicker<Item: Identifiable>: View {
         }
         .padding(.vertical, 5)
         .padding(.horizontal, 8)
-        .background(selected ? Color.white.opacity(0.10) : Color.clear, in: .rect(cornerRadius: 8))
+        .background(selected ? Color.pinch.opacity(0.16) : Color.clear, in: .rect(cornerRadius: 8))
     }
 
-    private func scheduleDwell() {
-        dwellTask?.cancel()
-        progress = 0
-        guard hasMoved else { return }      // require interaction before auto-committing
-        dwellTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(120))   // ignore quick fly-overs
-            guard !Task.isCancelled else { return }
-            withAnimation(.linear(duration: dwell)) { progress = 1 }
-            try? await Task.sleep(for: .seconds(dwell))
-            guard !Task.isCancelled else { return }
-            commit(at: index)
-        }
+    /// Highlight a row (tap or crown). Keeps the crown value in sync so a following turn continues
+    /// from here rather than snapping back.
+    private func select(_ i: Int) {
+        guard items.indices.contains(i) else { return }
+        index = i
+        value = Double(i)
+        WKInterfaceDevice.current().play(.click)
     }
 
     private func commit(at i: Int) {
-        dwellTask?.cancel()
         guard items.indices.contains(i) else { return }
         WKInterfaceDevice.current().play(.success)
         onCommit(items[i])

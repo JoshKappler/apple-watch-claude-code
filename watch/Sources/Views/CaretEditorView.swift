@@ -175,24 +175,40 @@ struct InlineDraftEditor: View {
         var id: Int { index }
     }
 
-    /// Fixed-width per line so a character caret offset maps cleanly to a known line. ~28 chars is
-    /// about one wrapped line at size 15 on the Ultra; fine-grained enough that the caret line
-    /// tracks smoothly as the crown steps it.
-    private static let editLineLength = 28
+    /// Target characters per line. Kept small enough that a word-wrapped line fits ONE visual line
+    /// at size 15 on the Ultra — so lines never wrap a second time (the wrap-of-a-fixed-slice was
+    /// what produced the staggered "full line / 2-word line" look).
+    private static let editLineLength = 22
 
-    /// Split the draft into fixed-length lines and tag the one holding the caret. An empty draft
-    /// yields a single empty caret-line so the marker still shows.
+    /// Split the draft into evenly-filled lines and tag the one holding the caret. Greedy word
+    /// wrap: each line fills up to `editLineLength`, breaking at the last SPACE so whole words stay
+    /// together (a single over-long word hard-breaks). The breaking space is kept at the line's end
+    /// so character offsets stay CONTIGUOUS (line.start + line.count == nextLine.start), which makes
+    /// the caret→line mapping exact. An empty draft yields one empty caret-line so the marker shows.
     private func caretChunks(caretAt c: Int) -> [CaretChunk] {
         let chars = Array(text)
         guard !chars.isEmpty else {
             return [CaretChunk(index: 0, text: "", hasCaret: true, caretInChunk: 0)]
         }
-        let len = Self.editLineLength
+        let maxLen = Self.editLineLength
         var result: [CaretChunk] = []
         var start = 0
         var line = 0
         while start < chars.count {
-            let end = min(start + len, chars.count)
+            var end: Int
+            if chars.count - start <= maxLen {
+                end = chars.count
+            } else {
+                // Look back from the line's far edge for a space to break after; if the line has no
+                // space (one long word), hard-break at maxLen.
+                var brk = -1
+                var j = start + maxLen - 1
+                while j > start {
+                    if chars[j] == " " { brk = j; break }
+                    j -= 1
+                }
+                end = brk > start ? brk + 1 : start + maxLen
+            }
             let slice = String(chars[start..<end])
             // The caret belongs to this line when it falls in [start, end); the very last line
             // also owns a caret sitting exactly at text.count (end of text).

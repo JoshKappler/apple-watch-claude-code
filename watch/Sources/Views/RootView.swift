@@ -147,23 +147,23 @@ private struct ConversationScreen: View {
         // the HStack — a nested ignoresSafeArea doesn't push past the parent VStack's layout).
         // The outer buttons' rounded outer-bottom corners keep them clear of the screen curve.
         .ignoresSafeArea(.container, edges: .bottom)
-        // SWIPE TO COLLAPSE — the crown does the actual scrolling, so a vertical swipe ANYWHERE
-        // is free to toggle the on-screen chrome: swipe DOWN hides the composer (max reading
-        // space), swipe UP brings it back. simultaneousGesture + a minimum distance so taps and
-        // crown scrolling are untouched; we only act on a clearly-vertical drag.
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 24)
+        // SWIPE TO COLLAPSE — the crown does ALL the scrolling in this app, so a finger swipe is
+        // free to mean "collapse/restore the chrome" instead of "scroll". We use highPriorityGesture
+        // (not simultaneousGesture) so it reliably WINS over the transcript ScrollView's finger-pan
+        // — a simultaneous gesture was being swallowed by the scroll view and never fired. Taps are
+        // untouched (a drag needs minimumDistance to start), and we only act on a clearly-vertical
+        // drag. While the input is EXPANDED we step aside (.subviews) so the draft editor's own
+        // gestures (caret back-swipe, its scroll) keep working; collapse-from-expanded happens via
+        // the chevron or Send instead.
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 18)
                 .onEnded { value in
                     let dy = value.translation.height
-                    guard abs(dy) > abs(value.translation.width) else { return } // vertical only
-                    if dy > 0 {
-                        // Down → collapse. Also drop any expanded-input state first.
-                        if store.inputOwnsCrown { store.inputOwnsCrown = false }
-                        store.chromeCollapsed = true
-                    } else {
-                        store.chromeCollapsed = false   // Up → restore the composer.
-                    }
-                }
+                    let dx = value.translation.width
+                    guard abs(dy) > abs(dx), abs(dy) > 18 else { return }   // clearly vertical
+                    store.chromeCollapsed = dy > 0   // down → collapse, up → restore
+                },
+            including: store.inputOwnsCrown ? .subviews : .all
         )
     }
 }

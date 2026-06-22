@@ -134,41 +134,41 @@ struct ComposerView: View {
     // MARK: - Draft box (orange expand arrow on top + inline editor inside)
 
     private var draftBox: some View {
-        VStack(spacing: 2) {
-            // Orange chevron at the TOP of the box. It ALWAYS points UP — up is the universal
-            // "expand / handle" affordance here (it never flips to a down arrow). Tap it to expand
-            // the input and take the crown; tap again (or send) to collapse back to one line.
-            HStack {
-                Spacer()
-                Button { toggleExpand() } label: {
-                    Image(systemName: "chevron.up")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 20, height: 20)
-                        .background(Circle().fill(Color.orange))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(expanded ? "Collapse input, return crown to chat" : "Expand input, take crown")
-                Spacer()
-            }
-
-            InlineDraftEditor(
-                text: $store.draft,
-                caretIndex: $store.caretIndex,
-                ownsCrown: $store.inputOwnsCrown,
-                mode: editMode
-            )
-            // Expanded: let the editor's ScrollView take all remaining vertical space.
-            .frame(maxHeight: expanded ? .infinity : nil)
-        }
+        InlineDraftEditor(
+            text: $store.draft,
+            caretIndex: $store.caretIndex,
+            ownsCrown: $store.inputOwnsCrown,
+            mode: editMode
+        )
+        // Expanded: let the editor's ScrollView take all remaining vertical space.
+        .frame(maxHeight: expanded ? .infinity : nil)
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.top, 5)
+        .padding(.bottom, 6)
         .frame(maxHeight: expanded ? .infinity : nil)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.10)))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(borderColor, lineWidth: 1)
         )
+        // The expand/collapse chevron is NESTED into the middle of the box's TOP border line (a
+        // small notch) rather than taking its own row, so the box is only as tall as the text in
+        // it. It FLIPS to signal state: UP = collapsed (tap to expand + take the crown); DOWN =
+        // expanded (tap to collapse + hand the crown back to the chat), so a second press reads as
+        // "this will close it".
+        .overlay(alignment: .top) {
+            Button { toggleExpand() } label: {
+                Image(systemName: expanded ? "chevron.down" : "chevron.up")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 26, height: 16)
+                    .background(Capsule().fill(Color.orange))
+            }
+            .buttonStyle(.plain)
+            .frame(width: 26, height: 16)   // pin the button's layout size to the capsule itself
+            .offset(y: -8)                  // so it straddles the top border line (centered on it)
+            .accessibilityLabel(expanded ? "Collapse input, return crown to chat" : "Expand input, take crown")
+        }
     }
 
     private var borderColor: Color {

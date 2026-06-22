@@ -28,9 +28,10 @@ struct ProjectPickerView: View {
                 .foregroundStyle(.secondary)
                 .frame(maxHeight: .infinity)
             } else {
-                Text("Project · turn crown, pause to pick")
+                Text("Turn crown to highlight · ✓ or double-pinch to open")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
 
                 CrownPicker(
                     items: store.projects,
@@ -42,6 +43,7 @@ struct ProjectPickerView: View {
                         return parts.joined(separator: "  ")
                     },
                     initialIndex: store.projects.firstIndex(where: { $0.id == store.currentProject?.id }) ?? 0,
+                    confirmVerb: "Open",
                     onCommit: { project in
                         store.selectProject(project)
                         dismiss()
