@@ -30,6 +30,16 @@ enum ConnectionState: Equatable, Sendable {
     case ready              // `ready` received — fully usable
     case reconnecting(attempt: Int)
     case failed(String)     // fatal (bad token / version) — needs user action
+
+    /// True while there's a live (or self-healing) socket: anything except a permanently
+    /// dead state. Send stays ENABLED here so the message queues and the hardware double
+    /// pinch always has a target. Only `.disconnected` / `.failed` (no socket) are dead.
+    var isAlive: Bool {
+        switch self {
+        case .connecting, .connected, .ready, .reconnecting: return true
+        case .disconnected, .failed: return false
+        }
+    }
 }
 
 /// Owns the socket lifecycle. State is confined to `queue`; callbacks hop to main.

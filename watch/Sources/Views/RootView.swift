@@ -11,6 +11,7 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var store: PinchStore
     @State private var showSettings = false
+    @State private var showProjects = false
 
     var body: some View {
         NavigationStack {
@@ -29,19 +30,36 @@ struct RootView: View {
             .animation(.snappy, value: store.pendingPermission)
             // No navigationTitle — the app name is dead weight on a tiny screen, and the
             // system clock the OS draws at the very top can't be removed by an app anyway.
-            // watchOS only renders ONE trailing toolbar item, so Projects + Mode moved into
-            // the bottom composer bar; only the connection badge + gear live up here.
+            // watchOS only renders ONE leading + ONE trailing toolbar item, so the top bar is:
+            //   leading  = folder (Projects) with a small connection dot riding on it
+            //   trailing = gear (Settings)
+            // Mode + the rest of the composer controls live in the bottom bar.
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    ConnectionBadge(state: store.connection, agent: store.agentState)
+                    Button {
+                        store.listProjects()
+                        showProjects = true
+                    } label: {
+                        Image(systemName: "folder")
+                            .overlay(alignment: .topTrailing) {
+                                // Connection status dot — kept visible up top per spec.
+                                Circle()
+                                    .fill(ConnectionBadge.color(state: store.connection, agent: store.agentState))
+                                    .frame(width: 7, height: 7)
+                                    .offset(x: 5, y: -4)
+                            }
+                    }
+                    .accessibilityLabel("Projects")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: {
                         Image(systemName: "gearshape")
                     }
+                    .accessibilityLabel("Settings")
                 }
             }
             .sheet(isPresented: $showSettings) { SettingsView() }
+            .sheet(isPresented: $showProjects) { ProjectPickerView() }
         }
         // Orange is applied per-control (send, mic, bubbles), NOT globally — a global tint
         // turns watchOS 26's toolbar buttons into solid orange blobs. Keep nav icons neutral.
@@ -65,7 +83,10 @@ private struct ConversationScreen: View {
                 .frame(maxHeight: .infinity)
             ComposerView()                 // fixed bottom bar — holds the .primaryAction Send.
         }
-        .ignoresSafeArea(.container, edges: .bottom)   // composer hugs the rounded bottom edge
+        // Previously `.ignoresSafeArea(.container, edges: .bottom)` shoved the button row into
+        // the rounded bottom corners, clipping the outer buttons. ComposerView now shapes its
+        // own corner buttons + insets to follow the screen curve, so we keep the row inside the
+        // safe area and just let it sit low naturally.
     }
 }
 
@@ -88,7 +109,10 @@ struct ConnectionBadge: View {
         .accessibilityLabel(accessibility)
     }
 
-    private var color: Color {
+    private var color: Color { ConnectionBadge.color(state: state, agent: agent) }
+
+    /// Shared connection-color logic so the top-bar folder dot matches the badge.
+    static func color(state: ConnectionState, agent: AgentState) -> Color {
         switch state {
         case .ready:
             switch agent {

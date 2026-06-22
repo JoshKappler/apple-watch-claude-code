@@ -63,6 +63,10 @@ final class PinchStore: ObservableObject {
     @Published var projectsLoading = false
     private var wantProjects = false   // re-request once `ready` if asked before the socket was up
 
+    // Prompts composed before the socket reached `.ready` queue here and flush in order
+    // the moment `ready` lands. Lets Send work the instant there's a message, even mid-reconnect.
+    private var pendingPrompts: [String] = []
+
     // Sub-systems (exposed so views can bind: mic state, speaking pulse, etc.).
     let speaker = Speaker()
     let shake = ShakeDetector()
@@ -135,12 +139,32 @@ final class PinchStore: ObservableObject {
     // MARK: - Intents (called by views)
 
     /// SEND — the double-tap / Send-button action. Adds the user bubble and ships a prompt.
+    /// If the socket isn't `.ready` yet (foreground socket often reconnects at the exact
+    /// moment you tap), the prompt is QUEUED and auto-flushed when `ready` next lands — so the
+    /// button never feels dead. Either way the user bubble appears immediately and the draft
+    /// clears. Whether to flush against the live socket is decided in one place to avoid
+    /// double-sending.
     func send(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, case .ready = connection else { return }
+        guard !trimmed.isEmpty else { return }
         transcript.append(.user(text: trimmed))
-        ws?.send(.prompt(text: trimmed))
+        draft = ""
+        if case .ready = connection {
+            ws?.send(.prompt(text: trimmed))
+        } else {
+            pendingPrompts.append(trimmed)   // flushed in handle(.ready)
+        }
         Haptics.click()
+    }
+
+    /// Ship any prompts queued while the socket was down. Called once `ready` lands.
+    private func flushPendingPrompts() {
+        guard !pendingPrompts.isEmpty else { return }
+        let queued = pendingPrompts
+        pendingPrompts.removeAll()
+        for text in queued {
+            ws?.send(.prompt(text: text))   // bubbles were already added in send()
+        }
     }
 
     /// Fold a dictation result into the draft (used by the mic button and the Action button).
@@ -215,6 +239,7 @@ final class PinchStore: ObservableObject {
                 wantProjects = false
                 ws?.send(.listProjects)
             }
+            flushPendingPrompts()   // ship anything composed while the socket was down
 
         case let .projects(list):
             projects = list
