@@ -1,11 +1,14 @@
 //
 //  PermissionCardView.swift
 //  The approve/decline gate. Appears full-screen when the agent is waiting on you.
-//  Title is risk-colored; the diff (edits) or command (bash) renders in a crown-scrollable
-//  monospace area; ✓ / ✗ buttons sit at the bottom. A prominent haptic fires on appear.
+//  Title is risk-colored; the diff (edits) or command (bash) renders in a finger-scrollable
+//  monospace area; a prominent haptic fires on appear.
 //
-//  NOTE: this card is NOT a scrolling List, and it does not declare a .primaryAction —
-//  approving via double-tap would be too dangerous, so approval here is an explicit tap.
+//  CONFIRM IS CROWN-DRIVEN. Since watchOS gives apps no crown *press*, the decision uses a
+//  CrownConfirm dial: turn the crown right past the threshold to ALLOW, left to DENY (it
+//  springs back if you stop short). The crown holds focus for the decision, so the diff above
+//  is scrolled with a finger. Tap ✓ / ✗ remain as an explicit shortcut. High-risk requests
+//  need a deliberate, larger crown throw (a higher threshold) so nothing dangerous is casual.
 //
 
 import SwiftUI
@@ -19,7 +22,7 @@ struct PermissionCardView: View {
         VStack(spacing: 6) {
             header
 
-            // Diff / command / detail in a crown-scrollable monospace pane.
+            // Diff / command / detail — finger-scrollable (crown is reserved for the decision).
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
                     if let detail = request.detail, request.diff == nil, request.command == nil {
@@ -44,17 +47,25 @@ struct PermissionCardView: View {
             }
             .frame(maxHeight: .infinity)
 
-            // "Remember for this session" — only meaningful for low/medium auto-allow convenience.
             if request.risk != .high {
                 Toggle(isOn: $remember) {
-                    Text("Remember this session")
-                        .font(.system(size: 11))
+                    Text("Remember this session").font(.system(size: 11))
                 }
                 .toggleStyle(.switch)
                 .padding(.horizontal, 8)
             }
 
-            actions
+            // Crown-driven decision. High-risk demands a bigger throw.
+            CrownConfirm(
+                approveTitle: "Allow",
+                denyTitle: "Deny",
+                threshold: request.risk == .high ? 0.9 : 0.7,
+                onApprove: { store.approve(remember: remember) },
+                onDeny: { store.decline() }
+            )
+            .padding(.horizontal, 6)
+
+            tapShortcut
         }
         .background(riskColor.opacity(0.12))
         .onAppear { Haptics.permissionNeeded() }
@@ -78,15 +89,15 @@ struct PermissionCardView: View {
         .padding(.top, 6)
     }
 
-    private var actions: some View {
+    /// Small tap targets that mirror the crown decision, for when a tap is easier.
+    private var tapShortcut: some View {
         HStack(spacing: 8) {
             Button(role: .destructive) {
                 store.decline()
             } label: {
-                Label("Deny", systemImage: "xmark")
-                    .labelStyle(.iconOnly)
+                Image(systemName: "xmark")
                     .frame(maxWidth: .infinity)
-                    .frame(height: 40)
+                    .frame(height: 30)
             }
             .buttonStyle(.bordered)
             .tint(.red)
@@ -94,16 +105,17 @@ struct PermissionCardView: View {
             Button {
                 store.approve(remember: remember)
             } label: {
-                Label("Allow", systemImage: "checkmark")
-                    .labelStyle(.iconOnly)
+                Image(systemName: "checkmark")
                     .frame(maxWidth: .infinity)
-                    .frame(height: 40)
+                    .frame(height: 30)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.bordered)
             .tint(request.risk == .high ? .orange : .green)
         }
+        .font(.system(size: 13))
         .padding(.horizontal, 6)
         .padding(.bottom, 4)
+        .accessibilityHint("Shortcut for the crown decision above")
     }
 
     private var riskColor: Color {

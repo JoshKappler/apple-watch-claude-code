@@ -2,8 +2,10 @@
 //  Store.swift
 //  PinchStore — the single source of truth the whole UI binds to.
 //
-//  Owns: the WSClient (connection), Speaker (TTS+haptic), SpeechRecognizer (push-to-talk),
-//  ShakeDetector (cancel). Holds connection state, the transcript, the current permission
+//  Owns: the WSClient (connection), Speaker (TTS+haptic), ShakeDetector (cancel).
+//  Voice input uses Apple's system dictation (TextFieldLink) inline in the composer — there
+//  is no in-app SpeechRecognizer because SFSpeechRecognizer does not function on watchOS.
+//  Holds connection state, the transcript, the current permission
 //  request, mode, and projects. Exposes intent methods the views call: send / approve /
 //  decline / setMode / cancel / selectProject.
 //
@@ -58,7 +60,6 @@ final class PinchStore: ObservableObject {
 
     // Sub-systems (exposed so views can bind: mic state, speaking pulse, etc.).
     let speaker = Speaker()
-    let speech = SpeechRecognizer()
     let shake = ShakeDetector()
     let push = PushRegistration()
 
@@ -111,7 +112,6 @@ final class PinchStore: ObservableObject {
         shake.start()
         ws?.connect()
         Task {
-            await speech.requestAuthorization()
             await push.register()
         }
     }
@@ -136,7 +136,6 @@ final class PinchStore: ObservableObject {
         transcript.append(.user(text: trimmed))
         ws?.send(.prompt(text: trimmed))
         Haptics.click()
-        speech.reset()
     }
 
     func approve(remember: Bool = false) {
