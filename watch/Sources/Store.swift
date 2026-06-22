@@ -280,8 +280,25 @@ final class PinchStore: ObservableObject {
     /// Clear context — wipe the on-watch transcript AND start a fresh Claude session
     /// (drops the resumed context so the next turn starts with an empty conversation).
     func clearContext() {
+        // Stop any in-flight turn on the OLD session first — otherwise its agent keeps
+        // running server-side after we've moved on.
+        ws?.send(.cancel)
         clearTranscript()
+        // Reset the live-turn state so the "thinking… 10m" indicator + timer stop the instant
+        // you clear, instead of ticking against a turn that no longer exists.
+        resetTurnState()
         ws?.newSession()
+    }
+
+    /// Clear all "a turn is in progress" state so the thinking indicator + live elapsed timer
+    /// stop immediately. Used by cancel() (manual stop) and by clearContext() — anything that
+    /// should halt the current turn from the watch's side without waiting on a backend frame.
+    private func resetTurnState() {
+        agentState = .idle
+        thinkingActive = false
+        turnStartedAt = nil
+        streamingAssistantIndex = nil
+        pendingPermission = nil
     }
 
     // MARK: - Intents (called by views)
@@ -368,9 +385,14 @@ final class PinchStore: ObservableObject {
     }
 
     func cancel() {
-        guard case .ready = connection else { return }
+        // Best-effort stop to the backend (no-ops cleanly if there's no live session). We do NOT
+        // gate on .ready: a turn that's "thinking forever" is exactly the case where the path may
+        // be flaky, and you must still be able to bail out.
         ws?.send(.cancel)
         speaker.stop()
+        // Optimistically clear the working state NOW so the thinking indicator + elapsed timer
+        // stop the instant you hit stop — even if the backend is wedged and never sends idle.
+        resetTurnState()
         Haptics.cancelled()
     }
 

@@ -41,6 +41,18 @@ struct ComposerView: View {
         store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// A turn is actively running (Claude is thinking or typing or running a tool).
+    private var isWorking: Bool {
+        store.agentState == .thinking || store.agentState == .running_tool
+    }
+
+    /// When Claude is working AND there's nothing being composed, the (otherwise idle) EDIT button
+    /// becomes a STOP button — a tappable, always-on-screen way to interrupt the turn (the terminal's
+    /// Esc-to-cancel). We only steal the EDIT slot when the draft is empty, so an in-progress message
+    /// keeps its edit affordance. The composer sits outside the transcript's swipe-catcher overlay,
+    /// so this button is reliably tappable while a turn runs.
+    private var showStop: Bool { isWorking && draftIsEmpty }
+
     /// Send is live whenever there's something to send AND the socket isn't permanently dead. This
     /// only drives the button's COLOR/fill now — the button stays tappable when empty so the
     /// double-pinch primary action can fall through to the mic (see primaryAction()).
@@ -73,6 +85,7 @@ struct ComposerView: View {
         .animation(.snappy, value: store.chromeCollapsed)
         .animation(.snappy, value: store.draft.isEmpty)
         .animation(.snappy, value: store.inputOwnsCrown)
+        .animation(.snappy, value: store.agentState)   // swap edit ⇄ stop as a turn starts/ends
     }
 
     private var fullComposer: some View {
@@ -82,14 +95,27 @@ struct ComposerView: View {
                 // Expanded: the box fills all vertical space above the button row.
                 .frame(maxHeight: expanded ? .infinity : nil)
 
-            // Bottom bar: exactly THREE buttons → [edit] [mic] [send].
+            // Bottom bar: exactly THREE buttons → [edit | stop] [mic] [send].
             HStack(alignment: .bottom, spacing: 6) {
-                // EDIT — expand the box + crown moves the caret. Highlighted while in edit mode.
-                BarButton(systemName: "pencil",
-                          tint: (expanded && editMode == .edit) ? .pinch : .primary,
-                          label: "Edit message",
-                          corner: .left) {
-                    toggleEdit()
+                // Leftmost slot: EDIT normally; STOP while Claude is working AND the draft is empty.
+                // Same frame/corner either way so the row never shifts — only the icon + action swap.
+                if showStop {
+                    // STOP — halt the current turn (like Esc in the terminal). Red so it reads as
+                    // an interrupt, not an accent control.
+                    BarButton(systemName: "stop.circle.fill",
+                              tint: .red,
+                              label: "Stop Claude",
+                              corner: .left) {
+                        store.cancel()
+                    }
+                } else {
+                    // EDIT — expand the box + crown moves the caret. Highlighted while in edit mode.
+                    BarButton(systemName: "pencil",
+                              tint: (expanded && editMode == .edit) ? .pinch : .primary,
+                              label: "Edit message",
+                              corner: .left) {
+                        toggleEdit()
+                    }
                 }
 
                 // MIC — the primary input. Coral-tinted. Apple system dictation only here.
