@@ -135,20 +135,9 @@ struct ComposerView: View {
             .padding(.horizontal, 8)
             .padding(.bottom, BarButtonGeometry.bottomGap)
         }
-        // SWIPE DOWN on the composer (a NON-scrolling surface, so the gesture actually fires —
-        // unlike a swipe over the transcript, whose scroll view swallows it) collapses all chrome.
-        // Disabled while the input is expanded so the editor's own caret/scroll gestures win.
-        .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 14)
-                .onEnded { value in
-                    let dy = value.translation.height
-                    guard abs(dy) > abs(value.translation.width), dy > 14 else { return }
-                    store.chromeCollapsed = true
-                    Haptics.click()
-                },
-            including: expanded ? .subviews : .all
-        )
+        // No swipe-to-collapse here anymore — minimize is the down-arrow on the right of the empty
+        // draft box (see draftBox). Swipe arbitration with the transcript's scroll pan was too
+        // unreliable to keep.
     }
 
     /// Collapsed chrome (via a swipe-down): EVERYTHING is hidden — the draft box, all three
@@ -157,42 +146,32 @@ struct ComposerView: View {
     /// tap it (or swipe up) to bring the composer + top icons back. It always points UP — up means
     /// "reveal / expand", never down.
     private var collapsedBar: some View {
-        Button { store.chromeCollapsed = false } label: {
+        // A single SHORT, wide handle so the chat feed keeps almost the entire screen. TAP only
+        // (swipe-to-restore was part of the unpredictable gesture and is gone). The up chevron
+        // means "bring the controls back up".
+        Button { store.chromeCollapsed = false; Haptics.click() } label: {
             Image(systemName: "chevron.up")
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.white)
-                .frame(width: 26, height: 22)
-                .background(Capsule().fill(Color.orange))
-                .frame(maxWidth: .infinity, minHeight: 30)   // taller swipe/tap target
+                .frame(maxWidth: .infinity)
+                .frame(height: 16)                                   // squat — minimal vertical footprint
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Show controls")
-        // Swipe UP on this bar (a non-scrolling surface) restores the chrome — the symmetric
-        // counterpart to the composer's swipe-down-to-collapse. Tap still works too.
-        .gesture(
-            DragGesture(minimumDistance: 14)
-                .onEnded { value in
-                    let dy = value.translation.height
-                    guard abs(dy) > abs(value.translation.width), dy < -14 else { return }
-                    store.chromeCollapsed = false
-                    Haptics.click()
-                }
-        )
+        .padding(.horizontal, 20)
         .padding(.bottom, BarButtonGeometry.bottomGap)
     }
 
-    // MARK: - Draft box (orange expand arrow on top + inline editor inside)
-
-    /// The expand chevron only matters when there's text to view/scroll (or we're already
-    /// expanded). When the draft is empty there's nothing to expand, so it's hidden — which also
-    /// keeps it out of the way and lets the chat feed run right down to the input bar.
-    private var showExpandChevron: Bool { expanded || !draftIsEmpty }
+    // MARK: - Draft box (inline editor + a dual-purpose arrow on its right)
 
     private var draftBox: some View {
-        // Chevron lives INLINE on the right of the text/hint — NOT as a notch on the top border.
-        // That keeps the box's top edge clean so nothing overlaps the transcript above it. It
-        // flips: UP = collapsed (tap to expand + take the crown), DOWN = expanded (tap to collapse).
+        // The arrow lives INLINE on the right of the text/hint. It's ALWAYS present (when not
+        // minimized) and means different things by state:
+        //   • empty + not expanded → DOWN  = MINIMIZE chrome (chat fills the screen)
+        //   • has text + not expanded → UP  = MAXIMIZE the input box (take the crown, scroll mode)
+        //   • expanded → DOWN = shrink the input box back + hand the crown to the chat
         HStack(alignment: .top, spacing: 6) {
             InlineDraftEditor(
                 text: $store.draft,
@@ -204,17 +183,15 @@ struct ComposerView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(maxHeight: expanded ? .infinity : nil)
 
-            if showExpandChevron {
-                Button { toggleExpand() } label: {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.up")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.orange)
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(expanded ? "Collapse input, return crown to chat" : "Expand input, take crown")
+            Button { draftArrowTapped() } label: {
+                Image(systemName: draftArrowIcon)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.orange)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel(draftArrowLabel)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -224,6 +201,27 @@ struct ComposerView: View {
             RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(borderColor, lineWidth: 1)
         )
+    }
+
+    /// UP only when there's text to expand into and we're not already expanded; DOWN otherwise
+    /// (DOWN = minimize chrome when empty, or shrink the maximized box when expanded).
+    private var draftArrowIcon: String {
+        (!expanded && !draftIsEmpty) ? "chevron.up" : "chevron.down"
+    }
+    private var draftArrowLabel: String {
+        if expanded { return "Shrink input box, return crown to chat" }
+        return draftIsEmpty ? "Minimize — chat fills the screen" : "Expand input box, take crown"
+    }
+    private func draftArrowTapped() {
+        if expanded {
+            collapse()                       // shrink the maximized box, hand the crown back
+        } else if draftIsEmpty {
+            store.chromeCollapsed = true     // minimize chrome → chat fills the screen
+            Haptics.click()
+        } else {
+            editMode = .scroll
+            store.inputOwnsCrown = true      // maximize the input box (scroll mode)
+        }
     }
 
     private var borderColor: Color {
@@ -239,16 +237,6 @@ struct ComposerView: View {
             collapse()
         } else {
             editMode = .edit
-            store.inputOwnsCrown = true
-        }
-    }
-
-    /// Orange arrow: expand into scroll mode, or collapse + return crown to chat.
-    private func toggleExpand() {
-        if expanded {
-            collapse()
-        } else {
-            editMode = .scroll
             store.inputOwnsCrown = true
         }
     }

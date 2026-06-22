@@ -136,12 +136,6 @@ private struct ConversationScreen: View {
             if !store.inputOwnsCrown {
                 TranscriptView()
                     .frame(maxHeight: .infinity)
-                    .overlay {
-                        ChromeSwipeCatcher(
-                            collapse: { store.chromeCollapsed = true; Haptics.click() },
-                            restore:  { store.chromeCollapsed = false; Haptics.click() }
-                        )
-                    }
             }
             ComposerView()                 // fixed bottom bar — holds the .primaryAction Send.
                 .frame(maxHeight: store.inputOwnsCrown ? .infinity : nil)
@@ -153,34 +147,11 @@ private struct ConversationScreen: View {
         // the HStack — a nested ignoresSafeArea doesn't push past the parent VStack's layout).
         // The outer buttons' rounded outer-bottom corners keep them clear of the screen curve.
         .ignoresSafeArea(.container, edges: .bottom)
-        // NOTE: the collapse/restore swipe is NOT attached here. A DragGesture on or around the
-        // transcript ScrollView is swallowed by the scroll view's UIKit pan recognizer on watchOS
-        // (it sits below SwiftUI's gesture arbitration, so neither highPriority nor simultaneous
-        // can win it — this was the bug behind 4 failed attempts). The swipe now lives on the
-        // NON-scrolling composer surfaces instead: swipe DOWN on the composer collapses, swipe UP
-        // on the collapsed bar restores (see ComposerView). The crown still scrolls the transcript.
-    }
-}
-
-/// Transparent layer OVER the transcript. It consumes finger touches (so a finger can't
-/// scroll the chat — the crown does that) and turns a clear vertical swipe into collapse
-/// (down) / restore (up). It is NOT focusable, so the Digital Crown still reaches the
-/// ScrollView underneath and scrolls it normally.
-private struct ChromeSwipeCatcher: View {
-    let collapse: () -> Void
-    let restore: () -> Void
-    var body: some View {
-        Color.clear
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 12)
-                    .onEnded { value in
-                        let dy = value.translation.height
-                        let dx = value.translation.width
-                        guard abs(dy) > abs(dx), abs(dy) > 12 else { return }
-                        if dy > 0 { collapse() } else { restore() }
-                    }
-            )
+        // Chrome collapse is now a BUTTON, not a swipe (see ComposerView): the down-arrow to the
+        // right of the empty input box minimizes; a short squat bar restores. The old swipe-over-
+        // the-transcript gesture was unpredictable — watchOS handed the finger drag to the scroll
+        // view's pan recognizer about half the time — so it (and its catcher overlay) are gone.
+        // The crown and the finger both scroll the transcript normally again.
     }
 }
 
