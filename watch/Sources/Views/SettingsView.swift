@@ -15,14 +15,56 @@ struct SettingsView: View {
     @AppStorage("pinch.token") private var token = ""
     @AppStorage("pinch.speakerMuted") private var speakerMuted = false
 
+    @State private var confirmBypass = false
+
     var body: some View {
         List {
+            // Permission mode — moved here from the bottom bar. Each row calls store.setMode.
+            // bypassPermissions keeps the RED styling + a guarded confirmation alert.
+            Section("Permission mode") {
+                ForEach(PermissionMode.allCases) { m in
+                    Button {
+                        if m == .bypassPermissions {
+                            confirmBypass = true        // guarded — don't apply yet
+                        } else {
+                            store.setMode(m)
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: m.symbol)
+                                .font(.system(size: 13))
+                                .foregroundStyle(m == .bypassPermissions ? .red : .primary)
+                                .frame(width: 20)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(m.label)
+                                    .font(.system(size: 14, weight: store.mode == m ? .semibold : .regular))
+                                    .foregroundStyle(m == .bypassPermissions ? .red : .primary)
+                                Text(m.blurb)
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                            if store.mode == m {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(m == .bypassPermissions ? .red : Color.pinch)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
             Section("Pairing") {
                 // Watch TextFields invoke dictation/scribble; paste from the paired phone also works.
+                // Plain TextFields (NOT SecureField) so watchOS doesn't pop the saved-passwords
+                // AutoFill sheet — pairing is baked in, the user never types these.
                 TextField("Server URL", text: $serverURL)
                     .font(.system(size: 13))
-                SecureField("Pairing token", text: $token)
+                    .textContentType(.URL)
+                TextField("Pairing token", text: $token)
                     .font(.system(size: 13))
+                    .textContentType(.none)
                 Text("e.g. wss://pinch.yourdomain.com — the backend's public URL. Token is the PINCH_TOKEN you set in the backend .env.")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
@@ -77,6 +119,15 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .alert("Skip all permissions?", isPresented: $confirmBypass) {
+            Button("Cancel", role: .cancel) { }
+            Button("Skip permissions", role: .destructive) {
+                store.setMode(.bypassPermissions)
+                Haptics.failure()   // deliberately alarming feedback.
+            }
+        } message: {
+            Text("The agent will run edits and commands with NO approvals. It can modify and delete files and run shell commands unattended. Only do this when you trust the task.")
+        }
     }
 
     private var statusText: String {

@@ -79,14 +79,22 @@ private struct ConversationScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TranscriptView()
-                .frame(maxHeight: .infinity)
+            // When the input is expanded it owns the whole screen above the buttons: hide the
+            // transcript so the ComposerView's draft box can fill the vertical space (maxHeight
+            // .infinity). Collapsed, the transcript takes the space and the box is ~1 line.
+            if !store.inputOwnsCrown {
+                TranscriptView()
+                    .frame(maxHeight: .infinity)
+            }
             ComposerView()                 // fixed bottom bar — holds the .primaryAction Send.
+                .frame(maxHeight: store.inputOwnsCrown ? .infinity : nil)
         }
-        // Previously `.ignoresSafeArea(.container, edges: .bottom)` shoved the button row into
-        // the rounded bottom corners, clipping the outer buttons. ComposerView now shapes its
-        // own corner buttons + insets to follow the screen curve, so we keep the row inside the
-        // safe area and just let it sit low naturally.
+        .animation(.snappy, value: store.inputOwnsCrown)
+        // Extend the whole stack into the bottom safe area so the button row reaches the
+        // physical bottom edge (it was floating ~1/8" high when the ignore was scoped to just
+        // the HStack — a nested ignoresSafeArea doesn't push past the parent VStack's layout).
+        // The outer buttons' rounded outer-bottom corners keep them clear of the screen curve.
+        .ignoresSafeArea(.container, edges: .bottom)
     }
 }
 

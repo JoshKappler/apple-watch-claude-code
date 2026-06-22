@@ -1,10 +1,14 @@
 /**
- * Per-connection handler.
+ * Per-connection WebSocket handler.
  *
- * Owns one WebSocket: the auth handshake, inbound frame routing, the agent
- * session (mock or real per config), a per-session event buffer for resume, and
- * the app-level + ws-level heartbeat. One Connection ≈ one watch attached to one
- * agent session.
+ * Owns one WebSocket: the auth handshake, inbound frame routing, the app-level +
+ * ws-level heartbeat, and attachment to a shared session. One Connection ≈ one
+ * watch attached to one agent session.
+ *
+ * Session state, the indexed event buffer, the agent wiring, resume, and the
+ * idle sweep all live in sessionRegistry.ts now — shared with the HTTP API. This
+ * file is just the WS transport: it attaches a live socket to a session, and the
+ * registry's pushEvent() forwards each outbound agent frame down that socket.
  *
  * Auth model (matches PROTOCOL.md + security posture in DECISIONS.md):
  *  - The upgrade handler may pre-authenticate via the Authorization header.
@@ -12,7 +16,6 @@
  *  - Token compared in constant time; protocolVersion validated (close 4426).
  */
 import { timingSafeEqual } from "node:crypto";
-import { randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
 import {
   CloseCode,
@@ -25,37 +28,21 @@ import {
 } from "@pinch/protocol";
 import { config } from "./config.js";
 import { log } from "./log.js";
-import { ApprovalRegistry } from "./approvals.js";
-import { projectRegistry, type Project } from "./projects.js";
-import type { AgentSession, SessionDeps } from "./sessionTypes.js";
-import { createMockSession } from "./mockSession.js";
-// session.js imports the SDK only lazily (inside start()), so importing the
-// factory here does NOT pull the SDK in at module scope.
-import { createClaudeSession } from "./session.js";
+import { projectRegistry } from "./projects.js";
+import {
+  createSession,
+  defaultProject,
+  ensureSessionSweep,
+  pushEvent,
+  resumableSession,
+  sessions,
+  trySocketSend,
+  type SessionState,
+} from "./sessionRegistry.js";
 
-/** Max buffered events retained per session for reconnect replay. */
-const EVENT_BUFFER_LIMIT = 500;
 /** ws-level ping cadence and the missed-pong budget before terminate(). */
 const WS_PING_INTERVAL_MS = 25_000;
 const MAX_MISSED_PONGS = 2;
-
-/**
- * Session state that must SURVIVE a socket dropping so a reconnecting watch can
- * resume. Keyed by Anthropic session id. Holds the live agent + a replay buffer.
- */
-interface SessionState {
-  sessionId: string;
-  agent: AgentSession;
-  approvals: ApprovalRegistry;
-  project: Project;
-  mode: PermissionMode;
-  buffer: ServerMsg[];
-  /** The currently attached socket (if any). Cleared on disconnect. */
-  socket: WebSocket | null;
-}
-
-/** Module-level registry of live sessions, so resume works across sockets. */
-const sessions = new Map<string, SessionState>();
 
 /** Constant-time token comparison that tolerates length differences. */
 function tokensMatch(provided: string, expected: string): boolean {
@@ -79,6 +66,7 @@ export class Connection {
   private readonly ws: WebSocket;
   private authed: boolean;
   private state: SessionState | null = null;
+  private deviceId: string | undefined;
   private missedPongs = 0;
   private wsPingTimer: NodeJS.Timeout | null = null;
   private closed = false;
@@ -95,6 +83,7 @@ export class Connection {
     });
 
     this.startWsHeartbeat();
+    ensureSessionSweep();
   }
 
   /* ───────────────────────────── inbound ───────────────────────────── */
@@ -137,7 +126,7 @@ export class Connection {
         void this.handleSelectProject(msg.projectId);
         break;
       case "ping":
-        this.send(srv.pong(msg.t), { buffer: false });
+        this.rawSend(srv.pong(msg.t));
         break;
     }
   }
@@ -160,30 +149,46 @@ export class Connection {
         { got: msg.protocolVersion, want: PROTOCOL_VERSION },
         "protocol mismatch",
       );
-      this.send(
+      this.rawSend(
         srv.error(
           `protocol mismatch: server ${PROTOCOL_VERSION}, client ${msg.protocolVersion}`,
           true,
         ),
-        { buffer: false },
       );
       this.fatalClose(CloseCode.PROTOCOL_MISMATCH, "protocol mismatch");
       return;
     }
 
     this.authed = true;
+    this.deviceId = msg.deviceId;
     await this.attachSession(msg.resumeSessionId);
   }
 
   /** Create a fresh session, or re-attach to an existing one for resume. */
   private async attachSession(resumeId?: string): Promise<void> {
-    const existing = resumeId ? sessions.get(resumeId) : undefined;
+    const existing = resumableSession(resumeId, this.deviceId);
     if (existing) {
-      existing.socket?.close(); // evict any stale socket
+      // Evict any stale socket still attached to this session (e.g. a half-dead
+      // foreground socket the watch dropped on screen sleep without a clean close).
+      if (existing.socket && existing.socket !== this.ws) {
+        try {
+          existing.socket.close(1000, "superseded");
+        } catch {
+          /* ignore */
+        }
+      }
       existing.socket = this.ws;
+      existing.deviceId = this.deviceId ?? existing.deviceId;
+      existing.lastActiveAt = Date.now();
       this.state = existing;
-      const ref = await projectRegistry.toRef(existing.project);
-      this.send(
+      const ref = config.mock
+        ? {
+            id: existing.project.id,
+            name: existing.project.name,
+            path: existing.project.root,
+          }
+        : await projectRegistry.toRef(existing.project);
+      this.rawSend(
         srv.ready({
           sessionId: existing.sessionId,
           mode: existing.mode,
@@ -191,33 +196,30 @@ export class Connection {
           models: [config.model],
           resumed: true,
         }),
-        { buffer: false },
       );
-      this.send(srv.notice("info", "Reconnected; resumed session."), {
-        buffer: false,
-      });
+      this.rawSend(srv.notice("info", "Reconnected; resumed session."));
       this.replayBuffer();
       return;
     }
 
-    const project = projectRegistry.default();
-    if (!project && !config.mock) {
-      this.send(srv.error("no projects configured", true), { buffer: false });
+    const proj = defaultProject();
+    if (!proj) {
+      this.rawSend(srv.error("no projects configured", true));
       this.fatalClose(CloseCode.INTERNAL, "no projects");
       return;
     }
-    // Mock mode can run without a real project root.
-    const proj: Project =
-      project ?? { id: "mock", name: "mock", root: process.cwd() };
 
-    const state = this.createSession(proj, "default");
+    const state = createSession(proj, "default", {
+      deviceId: this.deviceId,
+      socket: this.ws,
+      http: false,
+    });
     this.state = state;
-    sessions.set(state.sessionId, state);
 
     const ref = config.mock
       ? { id: proj.id, name: proj.name, path: proj.root }
       : await projectRegistry.toRef(proj);
-    this.send(
+    this.rawSend(
       srv.ready({
         sessionId: state.sessionId,
         mode: state.mode,
@@ -225,41 +227,7 @@ export class Connection {
         models: [config.model],
         resumed: false,
       }),
-      { buffer: false },
     );
-  }
-
-  /** Build a SessionState (agent + approvals + buffer) for a project. */
-  private createSession(project: Project, mode: PermissionMode): SessionState {
-    const approvals = new ApprovalRegistry();
-    const sessionId = `s_${randomUUID().slice(0, 12)}`;
-
-    const state: SessionState = {
-      sessionId,
-      agent: undefined as unknown as AgentSession, // set just below
-      approvals,
-      project,
-      mode,
-      buffer: [],
-      socket: this.ws,
-    };
-
-    const deps: SessionDeps = {
-      send: (m) => this.dispatchFromSession(state, m),
-      approvals,
-      cwd: project.root,
-      model: config.model,
-      initialMode: mode,
-      onSessionId: (sdkId) => {
-        // Map the SDK's own session id alongside ours so resume:sdkId works.
-        if (sdkId && !sessions.has(sdkId)) sessions.set(sdkId, state);
-      },
-    };
-
-    state.agent = config.mock
-      ? createMockSession(deps)
-      : createClaudeSession(deps);
-    return state;
   }
 
   private async handlePrompt(text: string): Promise<void> {
@@ -285,50 +253,54 @@ export class Connection {
     if (!state) return;
     state.mode = mode;
     state.agent.setMode(mode);
-    this.send(srv.modeChanged(mode));
+    // Logged frame: poll clients see mode changes too.
+    pushEvent(state, srv.modeChanged(mode));
   }
 
   private async handleCancel(): Promise<void> {
     const state = this.state;
     if (!state) return;
     await state.agent.interrupt();
-    this.send(srv.status("idle"));
-    this.send(srv.turnComplete("cancelled"));
+    pushEvent(state, srv.status("idle"));
+    pushEvent(state, srv.turnComplete("cancelled"));
   }
 
   private async handleListProjects(): Promise<void> {
     const refs = config.mock
       ? projectRegistry.list().map((p) => ({ id: p.id, name: p.name, path: p.root }))
       : await projectRegistry.listRefs();
-    this.send(srv.projects(refs), { buffer: false });
+    this.rawSend(srv.projects(refs));
   }
 
   private async handleSelectProject(projectId: string): Promise<void> {
     const project = projectRegistry.get(projectId);
     if (!project) {
-      this.send(srv.notice("warn", `unknown project: ${projectId}`));
+      this.rawSend(srv.notice("warn", `unknown project: ${projectId}`));
       return;
     }
     // Allowlist guard: belt-and-suspenders even though the id came from registry.
     if (!config.mock && !projectRegistry.isPathAllowed(project.root)) {
-      this.send(srv.error("project path not allowed", false));
+      this.rawSend(srv.error("project path not allowed", false));
       return;
     }
 
     const old = this.state;
     if (old) {
       await old.agent.cancel();
-      sessions.delete(old.sessionId);
+      for (const [key, s] of sessions) if (s === old) sessions.delete(key);
     }
 
-    const state = this.createSession(project, old?.mode ?? "default");
+    const state = createSession(project, old?.mode ?? "default", {
+      deviceId: this.deviceId,
+      socket: this.ws,
+      http: false,
+    });
     this.state = state;
-    sessions.set(state.sessionId, state);
 
     const ref = config.mock
       ? { id: project.id, name: project.name, path: project.root }
       : await projectRegistry.toRef(project);
-    this.send(
+    this.rawSend(
       srv.ready({
         sessionId: state.sessionId,
         mode: state.mode,
@@ -336,45 +308,21 @@ export class Connection {
         models: [config.model],
         resumed: false,
       }),
-      { buffer: false },
     );
   }
 
   /* ───────────────────────────── outbound ───────────────────────────── */
 
-  /** A session-originated frame: buffer it for resume, then send if attached. */
-  private dispatchFromSession(state: SessionState, msg: ServerMsg): void {
-    state.buffer.push(msg);
-    if (state.buffer.length > EVENT_BUFFER_LIMIT) state.buffer.shift();
-    if (state.socket && state.socket === this.ws && !this.closed) {
-      this.rawSend(msg);
-    } else if (state.socket && state.socket !== this.ws) {
-      // A newer socket owns this session now; let that connection's send run.
-      // (dispatchFromSession is bound to the connection that created the state,
-      //  but socket ownership moved — write directly to the current socket.)
-      trySocketSend(state.socket, msg);
-    }
-  }
-
-  /** Send a frame on this connection. `buffer:false` for transient frames. */
-  private send(msg: ServerMsg, opts: { buffer?: boolean } = {}): void {
-    if (opts.buffer !== false && this.state) {
-      this.state.buffer.push(msg);
-      if (this.state.buffer.length > EVENT_BUFFER_LIMIT)
-        this.state.buffer.shift();
-    }
-    this.rawSend(msg);
-  }
-
+  /** Connection-level frame straight to this socket (ready/pong/notice/etc). */
   private rawSend(msg: ServerMsg): void {
     if (this.closed) return;
     trySocketSend(this.ws, msg);
   }
 
-  /** Replay the per-session buffer to a freshly reconnected watch. */
+  /** Replay the per-session event log to a freshly reconnected watch. */
   private replayBuffer(): void {
     if (!this.state) return;
-    for (const msg of this.state.buffer) this.rawSend(msg);
+    for (const e of this.state.eventLog) this.rawSend(e.msg);
   }
 
   /* ───────────────────────────── heartbeat ───────────────────────────── */
@@ -414,19 +362,12 @@ export class Connection {
     this.closed = true;
     if (this.wsPingTimer) clearInterval(this.wsPingTimer);
     // Detach the socket but KEEP the session alive for resume. A reconnecting
-    // watch (resumeSessionId) re-attaches and gets the buffered catch-up.
+    // watch (resumeSessionId) re-attaches and gets the buffered catch-up. Stamp the
+    // detach time so the idle sweep retires it if the watch never comes back.
     if (this.state && this.state.socket === this.ws) {
       this.state.socket = null;
+      this.state.lastActiveAt = Date.now();
     }
     log.info({ sessionId: this.state?.sessionId }, "connection closed");
-  }
-}
-
-/** Write a frame to a socket, swallowing send errors on a dying socket. */
-function trySocketSend(ws: WebSocket, msg: ServerMsg): void {
-  try {
-    if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
-  } catch (err) {
-    log.debug({ err }, "send failed");
   }
 }

@@ -15,6 +15,7 @@ import { CloseCode } from "@pinch/protocol";
 import { config } from "./config.js";
 import { log } from "./log.js";
 import { Connection } from "./connection.js";
+import { handleApiRequest } from "./httpApi.js";
 
 const WS_PATH = "/ws";
 
@@ -58,8 +59,21 @@ export function createPinchServer(): PinchServer {
       res.end(JSON.stringify({ ok: true, mock: config.mock }));
       return;
     }
-    res.writeHead(426, { "content-type": "text/plain" });
-    res.end("Upgrade Required");
+    // HTTP API for the watchOS client (no WebSocket). Owns all /api/* routes;
+    // returns false to fall through to the 426 default for anything else.
+    void handleApiRequest(req, res)
+      .then((handled) => {
+        if (handled) return;
+        res.writeHead(426, { "content-type": "text/plain" });
+        res.end("Upgrade Required");
+      })
+      .catch((err) => {
+        log.error({ err }, "unhandled api error");
+        if (!res.headersSent) {
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "internal" }));
+        }
+      });
   });
 
   http.on("upgrade", (req: IncomingMessage, socket: Socket, head: Buffer) => {

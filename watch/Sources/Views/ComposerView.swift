@@ -1,149 +1,183 @@
 //
 //  ComposerView.swift
-//  Fixed bottom bar (NOT inside a scroll view) holding the voice + send + navigation controls.
+//  Fixed bottom bar (NOT inside a scroll view) holding the draft box + input controls.
 //
-//  Voice in = Apple's SYSTEM DICTATION, presented programmatically (see Dictation.swift) so
-//  the SAME path serves the on-screen mic and the Action button. Tap the mic → system
-//  dictation opens listening → speak → text appends to the draft.
-//  (SFSpeechRecognizer doesn't work on watchOS, so an in-app always-on listener isn't
-//  possible; this is the real, high-quality dictation.)
+//  Voice in = Apple's SYSTEM DICTATION, presented programmatically (see Dictation.swift). It is
+//  triggered ONLY by the MIC button now (the draft box tap no longer dictates). The mic is the
+//  primary, coral-tinted input. SFSpeechRecognizer doesn't work on watchOS; this system path is
+//  the real, high-quality dictation.
 //
 //  SEND is the hardware DOUBLE PINCH (`.handGestureShortcut(.primaryAction)`, Series 9 /
-//  Ultra 2+). The Send button is ALWAYS visible and stays ENABLED whenever there's a draft
-//  and the socket is alive (not permanently dead) — even mid-reconnect. A disabled button
-//  can't anchor Double Tap (that's what produced the "no primary action" error) and also
-//  swallows taps, so we keep it live; the store queues the prompt if the socket isn't ready.
+//  Ultra 2+). The Send button is ALWAYS visible and stays ENABLED whenever there's a draft and
+//  the socket is alive.
 //
-//  Bottom bar = exactly 4 buttons: [mode] [dictate] [edit] [send]. Projects + the connection
-//  dot moved UP to the top toolbar (RootView). Dictate is the prominent orange button.
-//  Tapping the draft box (or the pencil) opens the crown-cursor editor (CaretEditorView).
+//  Bottom bar = exactly 3 buttons: [edit] [mic] [send].
+//    • EDIT (pencil, left)  → expands the draft box + crown MOVES THE CARET (+ back-swipe deletes
+//      a word). Inline — NO sheet. See InlineDraftEditor.
+//    • MIC  (mic.fill, mid, coral) → Apple system dictation → store.appendDictated.
+//    • SEND (paperplane, right) → send + double-pinch.
+//  Mode/permissions moved to Settings (top section). Projects + the connection dot live in the
+//  top toolbar (RootView).
+//
+//  EXPAND / CROWN HANDOFF: a small chevron in an ORANGE CIRCLE sits at the TOP of the draft box.
+//  Collapsed it points UP (tap → expand + give the input the crown in SCROLL mode); expanded it
+//  points DOWN (tap → collapse + hand the crown back to the chat). EDIT also expands, but in
+//  caret mode. `store.inputOwnsCrown` is the shared flag the transcript watches so it yields
+//  crown focus. See InlineDraftEditor for the full model.
 //
 
 import SwiftUI
 
 struct ComposerView: View {
     @EnvironmentObject private var store: PinchStore
-    @State private var showEditor = false
-    @State private var showModes = false
+
+    /// True while the box is expanded and owns the crown (edit OR scroll).
+    private var expanded: Bool { store.inputOwnsCrown }
+    /// edit (caret) vs scroll, set by which control opened the expansion.
+    @State private var editMode: InlineEditMode = .scroll
 
     /// Send is live whenever there's something to send AND the socket isn't permanently dead.
-    /// This keeps the double-pinch primary action anchored to a real, enabled target.
     private var canSend: Bool {
         store.connection.isAlive && !store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
         VStack(spacing: 4) {
-            // Draft input box — a chat-style box holding the dictated/typed message. Scrolls
-            // internally when the message runs long (capped at ~3-4 lines). Tap to edit.
-            Button { showEditor = true } label: {
-                ScrollView(.vertical) {
-                    Text(store.draft.isEmpty ? "Tap mic to dictate…" : store.draft)
-                        .font(.system(size: 14))
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .foregroundStyle(store.draft.isEmpty ? .secondary : .primary)
-                }
-                .frame(maxHeight: 76)            // ~3-4 lines, then it scrolls inside the box
-                .scrollIndicators(.automatic)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.10)))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(store.draft.isEmpty ? Color.white.opacity(0.15) : Color.pinch.opacity(0.7), lineWidth: 1)
-                )
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 6)
+            draftBox
+                .padding(.horizontal, 6)
+                // Expanded: the box fills all vertical space above the button row.
+                .frame(maxHeight: expanded ? .infinity : nil)
 
-            // Bottom bar: [mode] [dictate] [edit] [send]. Outer buttons (mode, send) get extra
-            // bottom inset + a bigger outer corner radius so they curve away from the watch's
-            // rounded screen corners; the middle two sit lowest.
+            // Bottom bar: exactly THREE buttons → [edit] [mic] [send].
             HStack(alignment: .bottom, spacing: 6) {
-                // Mode (default / acceptEdits / plan / bypass). Red when bypass is armed. Outer-left.
-                BarButton(systemName: store.mode.symbol,
-                          tint: store.mode == .bypassPermissions ? .red : .primary,
-                          label: "Mode",
-                          prominent: false,
+                // EDIT — expand the box + crown moves the caret. Highlighted while in edit mode.
+                BarButton(systemName: "pencil",
+                          tint: (expanded && editMode == .edit) ? .pinch : .primary,
+                          label: "Edit message",
                           corner: .left) {
-                    showModes = true
+                    toggleEdit()
                 }
 
-                // Dictate — the prominent, orange-filled primary input. Left of middle.
+                // MIC — the primary input. Coral-tinted. Apple system dictation only here.
                 BarButton(systemName: "mic.fill",
                           tint: .pinch,
                           label: "Dictate",
-                          prominent: true,
                           corner: .none) {
-                    Dictation.present { store.appendDictated($0) }
+                    // Expanded/editing → insert at the caret; collapsed → append to end.
+                    Dictation.present { store.dictateAtCaret($0) }
                 }
 
-                // Edit — opens the crown-cursor editor directly (replaces the old "…" overflow).
-                BarButton(systemName: "pencil",
-                          tint: .primary,
-                          label: "Edit message",
-                          prominent: false,
-                          corner: .none) {
-                    showEditor = true
-                }
-
-                // Send — ALWAYS visible, enabled whenever canSend, carries the double-pinch
-                // primary action. Outer-right.
+                // SEND — always visible, carries the double-pinch primary action. Outer-right.
                 SendButton(enabled: canSend, corner: .right) { store.send(store.draft) }
             }
-            .padding(.horizontal, 8)            // clear the rounded screen corners
+            .padding(.horizontal, 8)
+            .padding(.bottom, BarButtonGeometry.bottomGap)
         }
-        .padding(.bottom, 2)
         .animation(.snappy, value: store.draft.isEmpty)
-        .sheet(isPresented: $showEditor) {
-            CaretEditorView(text: $store.draft, onSend: { store.send(store.draft) })
+        .animation(.snappy, value: store.inputOwnsCrown)
+    }
+
+    // MARK: - Draft box (orange expand arrow on top + inline editor inside)
+
+    private var draftBox: some View {
+        VStack(spacing: 2) {
+            // Orange chevron at the TOP of the box. UP = expand/take crown; DOWN = collapse/give back.
+            HStack {
+                Spacer()
+                Button { toggleExpand() } label: {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.up")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 20, height: 20)
+                        .background(Circle().fill(Color.orange))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(expanded ? "Collapse input, return crown to chat" : "Expand input, take crown")
+                Spacer()
+            }
+
+            InlineDraftEditor(
+                text: $store.draft,
+                caretIndex: $store.caretIndex,
+                ownsCrown: $store.inputOwnsCrown,
+                mode: editMode
+            )
+            // Expanded: let the editor's ScrollView take all remaining vertical space.
+            .frame(maxHeight: expanded ? .infinity : nil)
         }
-        .sheet(isPresented: $showModes) { ModeMenuView() }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxHeight: expanded ? .infinity : nil)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.10)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(borderColor, lineWidth: 1)
+        )
+    }
+
+    private var borderColor: Color {
+        if expanded { return Color.pinch }
+        return store.draft.isEmpty ? Color.white.opacity(0.15) : Color.pinch.opacity(0.7)
+    }
+
+    // MARK: - Toggles
+
+    /// EDIT button: expand into caret mode, or collapse if already editing.
+    private func toggleEdit() {
+        if expanded && editMode == .edit {
+            collapse()
+        } else {
+            editMode = .edit
+            store.inputOwnsCrown = true
+        }
+    }
+
+    /// Orange arrow: expand into scroll mode, or collapse + return crown to chat.
+    private func toggleExpand() {
+        if expanded {
+            collapse()
+        } else {
+            editMode = .scroll
+            store.inputOwnsCrown = true
+        }
+    }
+
+    private func collapse() {
+        store.inputOwnsCrown = false
+        editMode = .scroll
     }
 }
 
 // MARK: - Bottom-bar buttons
 
 /// Which side of the row a button is on, so the outer ones can curve with the screen corner.
-private enum BarCorner { case left, right, none }
+fileprivate enum BarCorner { case left, right, none }
 
-/// Squat (≈20% shorter) bordered icon button. Outer buttons get a bigger outer-bottom corner
-/// radius + extra bottom padding so they follow the Apple Watch Ultra's rounded screen corners.
+/// Squat bordered icon button. EVERY button uses the identical frame + zero vertical offset so
+/// all three tops AND bottoms line up exactly — the only per-button difference is the background
+/// SHAPE (outer buttons curve their outer-bottom corner).
 private struct BarButton: View {
     let systemName: String
     let tint: Color
     let label: String
-    let prominent: Bool
     let corner: BarCorner
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: prominent ? 19 : 16, weight: .semibold))
-                .foregroundStyle(prominent ? .white : tint)
-                .frame(maxWidth: .infinity, minHeight: 35)   // ~20% shorter than the old 44
-                .background(background)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(maxWidth: .infinity, minHeight: BarButtonGeometry.minHeight)
+                .barButtonBackground(corner: corner, fill: Color.white.opacity(0.14))
         }
         .buttonStyle(.plain)
-        .padding(.bottom, corner == .none ? 0 : 4)           // edges ride a touch higher
         .accessibilityLabel(label)
-    }
-
-    @ViewBuilder
-    private var background: some View {
-        let shape = BarButtonShape(corner: corner)
-        if prominent {
-            shape.fill(tint)
-        } else {
-            shape.fill(Color.white.opacity(0.14))
-        }
     }
 }
 
 /// Send button — its own type so the `.handGestureShortcut(.primaryAction)` stays anchored to
-/// a single visible, enabled control.
+/// a single visible, enabled control. Same frame/height as BarButton so tops/bottoms match.
 private struct SendButton: View {
     let enabled: Bool
     let corner: BarCorner
@@ -152,47 +186,128 @@ private struct SendButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "paperplane.fill")
-                .font(.system(size: 18, weight: .semibold))
+                .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(.white)
-                .frame(maxWidth: .infinity, minHeight: 35)
-                .background(BarButtonShape(corner: corner).fill(Color.pinch.opacity(enabled ? 1.0 : 0.4)))
+                .frame(maxWidth: .infinity, minHeight: BarButtonGeometry.minHeight)
+                .barButtonBackground(corner: corner, fill: Color.pinch.opacity(enabled ? 1.0 : 0.4))
         }
         .buttonStyle(.plain)
-        .padding(.bottom, corner == .none ? 0 : 4)
         .disabled(!enabled)
-        // Hardware double pinch → Send. The control stays enabled while the socket is alive so
-        // this always has a live target; no-op on unsupported hardware (tap still works).
         .handGestureShortcut(.primaryAction)
         .accessibilityLabel("Send")
     }
 }
 
-/// Rounded-rect whose OUTER-bottom corner is rounded more than the inner ones, so the two edge
-/// buttons approximate the watch's screen corner curve (middle of the row sits lowest).
-private struct BarButtonShape: Shape {
-    let corner: BarCorner
-    private let inner: CGFloat = 9
-    private let outer: CGFloat = 18
+// MARK: - Bottom-bar button background (shallow concentric-corner shape)
+
+/// Shared geometry + the TUNABLE constants for the bottom bar.
+///
+/// APPROACH: a SHALLOW outer-bottom corner. Rounding the outer-bottom with a radius centered
+/// *inside* the 32pt-tall button turns the whole corner into a tight quarter-circle — a fat
+/// diagonal slice (the old bug). Instead we trace a large-radius arc whose center sits FAR
+/// outside the button, down past its outer-bottom tip — geometrically the same idea as being
+/// concentric with the watch's big rounded screen corner. Over the button's small span that arc
+/// is gentle: it shaves only a thin sliver off the very outer-bottom tip, leaving the button
+/// nested just inside the screen corner with a small, roughly uniform gap. All other corners use
+/// the small uniform `innerRadius`, so every button TOP stays perfectly level.
+///
+/// The shape is built purely from the button's own local rect (watchOS `.global` GeometryReader
+/// frames are NOT anchored to the physical screen, so a true screen-coordinate solve is
+/// unreliable here — this local approximation gives the identical visual with no fragile
+/// coordinate math).
+enum BarButtonGeometry {
+    // -- TUNABLE GEOMETRY (Ultra 3 49mm, ~211×257pt) --------------------------------------
+    /// Small radius for top corners + inner-bottom corner. Keeps all tops uniform.
+    static let innerRadius: CGFloat = 9
+    /// Button height — squat. Every button shares this exact height.
+    static let minHeight: CGFloat = 32
+    /// Tiny gap below the row so buttons don't physically touch the bottom edge.
+    static let bottomGap: CGFloat = 3
+
+    /// Radius of the shallow outer-bottom arc — large, ~matching the watch's rounded SCREEN
+    /// corner (Ultra 3 49mm ≈ 40pt) minus a few pt of gap so the button nests just inside it.
+    /// LARGER ⇒ shallower curve (thinner sliver removed). This is the "concentric" radius.
+    static let outerArcRadius: CGFloat = 28
+    /// How far IN from the outer side edge the bottom edge starts curving up (pt). Together with
+    /// `outerArcRadius` this fixes the shallow arc. Small ⇒ less material removed. ~12–16 reads well.
+    static let cornerCut: CGFloat = 16
+    // -------------------------------------------------------------------------------------
+}
+
+extension View {
+    /// Fills the button background. The middle button gets a plain rounded rect; the two outer
+    /// buttons get the shallow concentric outer-bottom corner so they hug the screen's corner.
+    @ViewBuilder
+    fileprivate func barButtonBackground<F: ShapeStyle>(corner: BarCorner, fill: F) -> some View {
+        switch corner {
+        case .none:
+            background(RoundedRectangle(cornerRadius: BarButtonGeometry.innerRadius).fill(fill))
+        case .left, .right:
+            background(ConcentricCornerShape(corner: corner).fill(fill))
+        }
+    }
+}
+
+/// Rounded-rect whose OUTER-bottom corner is a SHALLOW large-radius arc (see BarButtonGeometry).
+/// All other corners use the small uniform `innerRadius` so every button top is level.
+private struct ConcentricCornerShape: Shape {
+    let corner: BarCorner                 // .left or .right (outer button side)
 
     func path(in rect: CGRect) -> Path {
-        let topL = inner, topR = inner
-        let botL = corner == .left ? outer : inner
-        let botR = corner == .right ? outer : inner
+        let inner = BarButtonGeometry.innerRadius
+        let isRight = (corner == .right)
+        let arcR = max(BarButtonGeometry.outerArcRadius, inner)
+        // The two points where the shallow arc meets the button edges.
+        let cut = min(BarButtonGeometry.cornerCut, rect.width - inner)
 
         var p = Path()
-        p.move(to: CGPoint(x: rect.minX + topL, y: rect.minY))
-        p.addLine(to: CGPoint(x: rect.maxX - topR, y: rect.minY))
-        p.addArc(center: CGPoint(x: rect.maxX - topR, y: rect.minY + topR),
-                 radius: topR, startAngle: .degrees(-90), endAngle: .degrees(0), clockwise: false)
-        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - botR))
-        p.addArc(center: CGPoint(x: rect.maxX - botR, y: rect.maxY - botR),
-                 radius: botR, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
-        p.addLine(to: CGPoint(x: rect.minX + botL, y: rect.maxY))
-        p.addArc(center: CGPoint(x: rect.minX + botL, y: rect.maxY - botL),
-                 radius: botL, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
-        p.addLine(to: CGPoint(x: rect.minX, y: rect.minY + topL))
-        p.addArc(center: CGPoint(x: rect.minX + topL, y: rect.minY + topL),
-                 radius: topL, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
+
+        if isRight {
+            // outer corner = bottom-RIGHT.
+            let pBottom = CGPoint(x: rect.maxX - cut, y: rect.maxY)          // on bottom edge
+            let cx = rect.maxX
+            let dx = cx - pBottom.x
+            let cy = pBottom.y + sqrt(max(arcR * arcR - dx * dx, 0))         // center below bottom edge
+            let center = CGPoint(x: cx, y: cy)
+            let pRight = CGPoint(x: rect.maxX, y: cy - arcR)
+            p.move(to: CGPoint(x: rect.minX + inner, y: rect.minY))
+            p.addLine(to: CGPoint(x: rect.maxX - inner, y: rect.minY))
+            p.addArc(center: CGPoint(x: rect.maxX - inner, y: rect.minY + inner),
+                     radius: inner, startAngle: .degrees(-90), endAngle: .degrees(0), clockwise: false)
+            p.addLine(to: CGPoint(x: rect.maxX, y: max(pRight.y, rect.minY + inner)))
+            let startA = atan2(pRight.y - center.y, pRight.x - center.x)
+            let endA   = atan2(pBottom.y - center.y, pBottom.x - center.x)
+            p.addArc(center: center, radius: arcR,
+                     startAngle: .radians(startA), endAngle: .radians(endA), clockwise: true)
+            p.addLine(to: CGPoint(x: rect.minX + inner, y: rect.maxY))
+            p.addArc(center: CGPoint(x: rect.minX + inner, y: rect.maxY - inner),
+                     radius: inner, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
+        } else {
+            // outer corner = bottom-LEFT.
+            let pBottom = CGPoint(x: rect.minX + cut, y: rect.maxY)          // on bottom edge
+            let cx = rect.minX
+            let dx = pBottom.x - cx
+            let cy = pBottom.y + sqrt(max(arcR * arcR - dx * dx, 0))
+            let center = CGPoint(x: cx, y: cy)
+            let pLeft = CGPoint(x: rect.minX, y: cy - arcR)
+            p.move(to: CGPoint(x: rect.minX + inner, y: rect.minY))
+            p.addLine(to: CGPoint(x: rect.maxX - inner, y: rect.minY))
+            p.addArc(center: CGPoint(x: rect.maxX - inner, y: rect.minY + inner),
+                     radius: inner, startAngle: .degrees(-90), endAngle: .degrees(0), clockwise: false)
+            p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - inner))
+            p.addArc(center: CGPoint(x: rect.maxX - inner, y: rect.maxY - inner),
+                     radius: inner, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
+            p.addLine(to: pBottom)
+            let startA = atan2(pBottom.y - center.y, pBottom.x - center.x)
+            let endA   = atan2(pLeft.y - center.y, pLeft.x - center.x)
+            p.addArc(center: center, radius: arcR,
+                     startAngle: .radians(startA), endAngle: .radians(endA), clockwise: true)
+            p.addLine(to: CGPoint(x: rect.minX, y: max(pLeft.y, rect.minY + inner)))
+        }
+
+        // Outer-top small corner (top-LEFT for both layouts) closes back to the start point.
+        p.addArc(center: CGPoint(x: rect.minX + inner, y: rect.minY + inner),
+                 radius: inner, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
         p.closeSubpath()
         return p
     }

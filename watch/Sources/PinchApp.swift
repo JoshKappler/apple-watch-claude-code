@@ -21,14 +21,19 @@ struct PinchApp: App {
     @AppStorage("pinch.speakerMuted") private var speakerMuted = false
 
     init() {
-        // Pre-fill pairing so there is NOTHING to type on the watch. These are *registered*
-        // defaults (not written values) — still fully overridable in Settings, and they only
-        // apply until the user changes them. NOTE: the quick-tunnel URL is ephemeral and the
-        // token is a real bearer secret; both get replaced when we move to a permanent tunnel.
-        UserDefaults.standard.register(defaults: [
-            "pinch.serverURL": "wss://portfolio-auctions-plasma-induced.trycloudflare.com",
-            "pinch.token": "***ROTATED-TOKEN-REMOVED***",
-        ])
+        // Pre-fill pairing so there is NOTHING to type on the watch.
+        let liveURL = "wss://portfolio-auctions-plasma-induced.trycloudflare.com"
+        let liveToken = "***ROTATED-TOKEN-REMOVED***"
+        let defaults = UserDefaults.standard
+        defaults.register(defaults: ["pinch.serverURL": liveURL, "pinch.token": liveToken])
+
+        // TEMP (dev phase): the quick-tunnel URL changes between sessions, and a value an
+        // earlier build wrote to UserDefaults would override register(defaults:) and strand the
+        // watch on a DEAD old tunnel (symptom: "Connecting…" forever, nothing in the backend
+        // log). Force the live values every launch so a stale stored URL can't do that. Remove
+        // this force-write once we move to a permanent tunnel and let the user own the setting.
+        defaults.set(liveURL, forKey: "pinch.serverURL")
+        defaults.set(liveToken, forKey: "pinch.token")
     }
 
     var body: some Scene {
@@ -49,8 +54,14 @@ struct PinchApp: App {
                     case .active:
                         store.configure(serverURL: serverURL, token: token, speakerMuted: speakerMuted)
                         store.onActive()
-                    case .background, .inactive:
+                    case .background:
+                        // Only a REAL background (screen off / app suspended) drops the socket.
                         store.onBackground()
+                    case .inactive:
+                        // Transient (wrist tilt, Control Center, system overlay, launch flicker)
+                        // — do NOT disconnect, or the socket gets torn down ~1s after dialing and
+                        // never opens. Keep it alive across these blips.
+                        break
                     @unknown default:
                         break
                     }

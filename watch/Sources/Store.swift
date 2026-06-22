@@ -50,9 +50,21 @@ final class PinchStore: ObservableObject {
     // Conversation.
     @Published var transcript: [TranscriptItem] = []
     @Published var thinkingActive = false          // subtle "extended thinking" indicator
+    @Published var turnStartedAt: Date?            // when the current thinking/tool turn began (live timer)
 
-    // The message being composed (dictation appends here; the composer + caret editor bind to it).
+    // The message being composed (dictation appends here; the composer + inline editor bind to it).
     @Published var draft = ""
+
+    // Caret position (character offset into `draft`) lifted into the store so the MIC button can
+    // INSERT dictated text at the caret when the input is expanded/editing. InlineDraftEditor
+    // reads/writes this so it stays in sync with what the crown is moving.
+    @Published var caretIndex = 0
+
+    // Crown ownership for the draft box. When true, the draft box is EXPANDED and owns the
+    // Digital Crown (moving the caret in EDIT mode, or scrolling the draft text in SCROLL mode);
+    // the transcript must yield crown focus. When false, the crown scrolls the chat transcript.
+    // TranscriptView reads this to decide whether its ScrollView should hold crown focus.
+    @Published var inputOwnsCrown = false
 
     // Permission gate.
     @Published var pendingPermission: ServerMsg.PermissionRequest?
@@ -149,6 +161,7 @@ final class PinchStore: ObservableObject {
         guard !trimmed.isEmpty else { return }
         transcript.append(.user(text: trimmed))
         draft = ""
+        caretIndex = 0
         if case .ready = connection {
             ws?.send(.prompt(text: trimmed))
         } else {
@@ -172,6 +185,25 @@ final class PinchStore: ObservableObject {
         let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
         draft = draft.isEmpty ? t : draft + " " + t
+        caretIndex = draft.count
+        Haptics.click()
+    }
+
+    /// Insert a dictation result at the current caret (used by the mic button while the input is
+    /// expanded/editing) and advance the caret past it. Falls back to appendDictated when the
+    /// box is collapsed (no meaningful caret on screen).
+    func dictateAtCaret(_ raw: String) {
+        guard inputOwnsCrown else { appendDictated(raw); return }
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        let c = min(max(caretIndex, 0), draft.count)
+        let idx = draft.index(draft.startIndex, offsetBy: c)
+        // Space-pad so inserted speech doesn't fuse onto neighbouring words.
+        let needLeadSpace = c > 0 && !draft[draft.index(before: idx)].isWhitespace
+        let needTrailSpace = idx < draft.endIndex && !draft[idx].isWhitespace
+        let insert = (needLeadSpace ? " " : "") + t + (needTrailSpace ? " " : "")
+        draft.insert(contentsOf: insert, at: idx)
+        caretIndex = c + insert.count
         Haptics.click()
     }
 
@@ -249,6 +281,12 @@ final class PinchStore: ObservableObject {
         case let .status(state, _):
             agentState = state
             thinkingActive = (state == .thinking)
+            // Start the turn timer the moment work begins; clear it the moment we go idle.
+            if (state == .thinking || state == .running_tool), turnStartedAt == nil {
+                turnStartedAt = Date()
+            } else if state == .idle {
+                turnStartedAt = nil
+            }
             if state == .error { Haptics.failure() }
 
         case let .assistantDelta(text):
@@ -278,6 +316,7 @@ final class PinchStore: ObservableObject {
         case let .turnComplete(stopReason):
             streamingAssistantIndex = nil
             thinkingActive = false
+            turnStartedAt = nil
             if stopReason == .end_turn { Haptics.success() }
             if stopReason == .error { Haptics.failure() }
 
