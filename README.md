@@ -25,6 +25,10 @@ Watch (SwiftUI) ⇄ WSS/cellular ⇄ Cloudflare Tunnel ⇄ Backend (Agent SDK) �
 
 ## Quick start
 
+**Easiest (remote, no sign-in):** double-click `infra/start-pinch.command` (or copy it to your
+Desktop for a one-click icon). It brings the backend + an anonymous Cloudflare quick tunnel up,
+reuses them if already running, and prints the `wss://…/ws` URL + token to enter on the watch.
+
 See `docs/STATUS.md` for the current state and the exact secrets + commands you need. TL;DR:
 
 ```bash
