@@ -20,6 +20,17 @@ struct PinchApp: App {
     @AppStorage("pinch.token") private var token = ""
     @AppStorage("pinch.speakerMuted") private var speakerMuted = false
 
+    init() {
+        // Pre-fill pairing so there is NOTHING to type on the watch. These are *registered*
+        // defaults (not written values) — still fully overridable in Settings, and they only
+        // apply until the user changes them. NOTE: the quick-tunnel URL is ephemeral and the
+        // token is a real bearer secret; both get replaced when we move to a permanent tunnel.
+        UserDefaults.standard.register(defaults: [
+            "pinch.serverURL": "wss://portfolio-auctions-plasma-induced.trycloudflare.com",
+            "pinch.token": "***ROTATED-TOKEN-REMOVED***",
+        ])
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()

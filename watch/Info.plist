@@ -2,48 +2,34 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleName</key>
-	<string>Pinch</string>
 	<key>CFBundleDisplayName</key>
 	<string>Pinch</string>
-	<key>CFBundleIdentifier</key>
-	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleName</key>
+	<string>Pinch</string>
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
-
-	<!-- Standalone watchOS app (no paired iOS companion app). -->
-	<key>WKApplication</key>
-	<true/>
-	<key>WKWatchOnly</key>
-	<true/>
-
-	<!-- Permission usage strings — required or the app crashes when it asks. -->
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Pinch transcribes what you say into a prompt for the coding agent.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Pinch listens while you hold the mic button to capture your spoken prompt.</string>
-	<key>NSMotionUsageDescription</key>
-	<string>Pinch detects a wrist shake to cancel the agent's in-flight turn.</string>
-
-	<!-- We only talk to your own server over TLS; no arbitrary loads needed.
-	     If you must hit a plain-ws:// dev box on the LAN, add an ATS exception here. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<false/>
 	</dict>
-
-	<!-- Background mode: APNs remote notifications (re-engagement). Note watchOS gives
-	     NO background WebSocket — the socket lives only while the app is foreground. -->
-	<key>WKBackgroundModes</key>
-	<array>
-		<string>remote-notification</string>
-	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Pinch listens while you hold the mic button to capture your spoken prompt.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>Pinch detects a wrist shake to cancel the agent's in-flight turn.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Pinch transcribes what you say into a prompt for the coding agent.</string>
+	<key>WKApplication</key>
+	<true/>
+	<key>WKWatchOnly</key>
+	<true/>
 </dict>
 </plist>

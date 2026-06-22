@@ -38,19 +38,12 @@ final class PushRegistration: NSObject, ObservableObject {
         bearerToken = token
     }
 
-    /// Ask for notification permission and register for remote notifications.
+    /// No-op: APNs needs the aps-environment entitlement, which free/personal Apple teams
+    /// can't have. We skip notification authorization and remote-notification registration
+    /// entirely (also means no permission prompt on launch). Re-enable with a paid account
+    /// by restoring the body below and adding aps-environment back to Pinch.entitlements.
     func register() async {
-        let center = UNUserNotificationCenter.current()
-        center.delegate = self
-        do {
-            authorized = try await center.requestAuthorization(options: [.alert, .sound])
-            guard authorized else { return }
-            // Triggers application(_:didRegisterForRemoteNotificationsWithDeviceToken:)
-            // delivered to the WKApplicationDelegate (PinchAppDelegate) → handed back here.
-            WKApplication.shared().registerForRemoteNotifications()
-        } catch {
-            authorized = false
-        }
+        // Intentionally empty. See note above.
     }
 
     /// Called by the app delegate when APNs hands us a token.
