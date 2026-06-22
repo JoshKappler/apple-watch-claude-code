@@ -94,6 +94,12 @@ final class PinchStore: ObservableObject {
     // TranscriptView reads this to decide whether its ScrollView should hold crown focus.
     @Published var inputOwnsCrown = false
 
+    // Chrome collapse: a vertical swipe hides the composer (draft box + edit/mic) so the
+    // transcript text fills the whole screen — max reading space on a tiny display. The
+    // Send button stays mounted even collapsed so the hardware double-pinch still works.
+    // Scrolling is the crown's job, so swallowing vertical swipes for this is safe.
+    @Published var chromeCollapsed = false
+
     // Permission gate.
     @Published var pendingPermission: ServerMsg.PermissionRequest?
 
@@ -161,8 +167,10 @@ final class PinchStore: ObservableObject {
         }
     }
 
-    /// Master TTS on/off. Persisted; gates ALL speech via the Speaker.
-    @Published var ttsEnabled: Bool = true {
+    /// Master TTS on/off. Persisted; gates ALL speech via the Speaker. Defaults OFF —
+    /// the watch speaker is usually silent without AirPods anyway, and the haptic still
+    /// fires, so audible readback is opt-in.
+    @Published var ttsEnabled: Bool = false {
         didSet {
             guard oldValue != ttsEnabled else { return }
             UserDefaults.standard.set(ttsEnabled, forKey: SettingsKey.tts)
@@ -185,7 +193,7 @@ final class PinchStore: ObservableObject {
         d.register(defaults: [
             SettingsKey.model: "claude-opus-4-8",
             SettingsKey.thinking: ThinkingLevel.medium.rawValue,
-            SettingsKey.tts: true,
+            SettingsKey.tts: false,
         ])
         // These assignments DO fire didSet, but that's harmless during init: the persist just
         // re-writes the same stored value, and pushConfig() is a no-op while `ws` is still nil
@@ -501,6 +509,12 @@ final class PinchStore: ObservableObject {
     }
 
     private func appendNotice(_ text: String, warn: Bool) {
+        // Collapse consecutive identical notices (e.g. a flaky watch reconnecting over and
+        // over would otherwise stack "Reconnected — session resumed." lines forever).
+        if case let .notice(_, lastText, lastWarn)? = transcript.last,
+           lastText == text, lastWarn == warn {
+            return
+        }
         transcript.append(.notice(text: text, warn: warn))
     }
 

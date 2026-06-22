@@ -90,11 +90,30 @@ private struct ConversationScreen: View {
                 .frame(maxHeight: store.inputOwnsCrown ? .infinity : nil)
         }
         .animation(.snappy, value: store.inputOwnsCrown)
+        .animation(.snappy, value: store.chromeCollapsed)
         // Extend the whole stack into the bottom safe area so the button row reaches the
         // physical bottom edge (it was floating ~1/8" high when the ignore was scoped to just
         // the HStack — a nested ignoresSafeArea doesn't push past the parent VStack's layout).
         // The outer buttons' rounded outer-bottom corners keep them clear of the screen curve.
         .ignoresSafeArea(.container, edges: .bottom)
+        // SWIPE TO COLLAPSE — the crown does the actual scrolling, so a vertical swipe ANYWHERE
+        // is free to toggle the on-screen chrome: swipe DOWN hides the composer (max reading
+        // space), swipe UP brings it back. simultaneousGesture + a minimum distance so taps and
+        // crown scrolling are untouched; we only act on a clearly-vertical drag.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 24)
+                .onEnded { value in
+                    let dy = value.translation.height
+                    guard abs(dy) > abs(value.translation.width) else { return } // vertical only
+                    if dy > 0 {
+                        // Down → collapse. Also drop any expanded-input state first.
+                        if store.inputOwnsCrown { store.inputOwnsCrown = false }
+                        store.chromeCollapsed = true
+                    } else {
+                        store.chromeCollapsed = false   // Up → restore the composer.
+                    }
+                }
+        )
     }
 }
 

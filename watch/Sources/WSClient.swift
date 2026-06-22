@@ -104,6 +104,10 @@ final class WSClient: NSObject, @unchecked Sendable {
         didSet { Self.persistResume(resumeSessionId, key: resumeKey) }
     }
     private var resumeKey: String { "pinch.resumeSessionId.\(deviceId)" }
+    /// Persisted poll cursor for the resume session, so a relaunch continues where it left off
+    /// instead of replaying the whole event log (the duplicate-bubble bug). Paired with
+    /// `resumeSessionId` — both are keyed per device and written together on a live session.
+    private var resumeCursorKey: String { "pinch.resumeCursor.\(deviceId)" }
 
     // Reconnect bookkeeping.
     private var reconnectAttempt = 0
@@ -174,6 +178,7 @@ final class WSClient: NSObject, @unchecked Sendable {
                 self.everReachedReady = false
                 self.resumeSessionId = nil
                 self.sessionId = nil
+                Self.persistCursor(0, key: self.resumeCursorKey)
             }
             self.serverURL = serverURL
             self.token = token
@@ -299,8 +304,23 @@ final class WSClient: NSObject, @unchecked Sendable {
             // Success → adopt the session, persist it as resume, reset backoff + debounce.
             self.sessionId = sid
             self.resumeSessionId = sid
-            self.pollCursor = 0
-            self.appliedHighWater = 0
+            // CURSOR HANDLING — the fix for duplicate bubbles on reconnect.
+            //   • resumed: the backend kept the SAME session + event log. Its log still holds
+            //     everything we already showed, so starting the cursor at 0 would re-deliver the
+            //     whole history → every assistant bubble appears twice. Instead CONTINUE from the
+            //     last cursor we persisted (survives app relaunch), so we only pull strictly-new
+            //     events. No replay → no duplicates, and your own prompt bubbles (which never live
+            //     in the server log) aren't clobbered by a from-zero rebuild.
+            //   • fresh: a brand-new session has an empty log → start at 0 and reset the mark.
+            if resumed {
+                let saved = Self.loadCursor(key: self.resumeCursorKey)
+                self.pollCursor = saved
+                self.appliedHighWater = saved
+            } else {
+                self.pollCursor = 0
+                self.appliedHighWater = 0
+                Self.persistCursor(0, key: self.resumeCursorKey)
+            }
             self.reconnectAttempt = 0
             self.everReachedReady = true
             self.consecutivePollFailures = 0
@@ -487,9 +507,16 @@ final class WSClient: NSObject, @unchecked Sendable {
         }
 
         // Advance the poll cursor to the returned high-water (monotonic). Next poll asks for
-        // `index >= highWater`, i.e. only events newer than everything we've now seen.
+        // `index >= highWater`, i.e. only events newer than everything we've now seen. Persist
+        // it (only when it actually advances) so a reconnect/relaunch RESUMES here instead of
+        // replaying the whole log — this is what stops the duplicate bubbles.
         if let highWater {
-            queue.async { if highWater > self.pollCursor { self.pollCursor = highWater } }
+            queue.async {
+                if highWater > self.pollCursor {
+                    self.pollCursor = highWater
+                    Self.persistCursor(self.pollCursor, key: self.resumeCursorKey)
+                }
+            }
         }
     }
 
@@ -713,6 +740,14 @@ final class WSClient: NSObject, @unchecked Sendable {
         } else {
             UserDefaults.standard.removeObject(forKey: key)
         }
+    }
+
+    /// Persist / restore the poll cursor for the resume session (see resumeCursorKey).
+    private static func persistCursor(_ cursor: Int, key: String) {
+        UserDefaults.standard.set(cursor, forKey: key)
+    }
+    private static func loadCursor(key: String) -> Int {
+        max(0, UserDefaults.standard.integer(forKey: key))
     }
 
     // MARK: - Network-path diagnostics

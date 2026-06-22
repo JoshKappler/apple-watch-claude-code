@@ -23,7 +23,8 @@ final class Speaker: NSObject, ObservableObject {
     /// no audio AND no haptic — so "TTS off" really is silent. This is the single gate
     /// every assistant readback passes through; the Store only ever calls speak() for a
     /// NEW assistant message (deduped at the source), so we don't dedupe again here.
-    @Published var ttsEnabled = true
+    /// Defaults OFF to match Store.ttsEnabled (audible readback is opt-in).
+    @Published var ttsEnabled = false
 
     /// True while audio is actively being spoken — drives the transcript "speaking pulse".
     @Published private(set) var isSpeaking = false

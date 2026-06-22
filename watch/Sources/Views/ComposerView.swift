@@ -60,6 +60,22 @@ struct ComposerView: View {
     }
 
     var body: some View {
+        Group {
+            // Chrome collapsed (via a vertical swipe — see RootView): hide the draft box +
+            // edit/mic so the transcript fills the screen. Keep the Send button mounted so the
+            // hardware double-pinch still works. Doesn't apply while the input is expanded.
+            if store.chromeCollapsed && !expanded {
+                collapsedBar
+            } else {
+                fullComposer
+            }
+        }
+        .animation(.snappy, value: store.chromeCollapsed)
+        .animation(.snappy, value: store.draft.isEmpty)
+        .animation(.snappy, value: store.inputOwnsCrown)
+    }
+
+    private var fullComposer: some View {
         VStack(spacing: 4) {
             draftBox
                 .padding(.horizontal, 6)
@@ -93,8 +109,27 @@ struct ComposerView: View {
             .padding(.horizontal, 8)
             .padding(.bottom, BarButtonGeometry.bottomGap)
         }
-        .animation(.snappy, value: store.draft.isEmpty)
-        .animation(.snappy, value: store.inputOwnsCrown)
+    }
+
+    /// Collapsed chrome: a grab handle + just the Send button. The transcript fills the rest of
+    /// the screen, but Send stays mounted so the double-pinch primary action still fires (and an
+    /// empty draft still opens dictation). Tap the handle (or swipe up) to bring the composer back.
+    private var collapsedBar: some View {
+        VStack(spacing: 3) {
+            Button { store.chromeCollapsed = false } label: {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Show controls")
+
+            SendButton(live: canSend, corner: .none) { primaryAction() }
+                .padding(.horizontal, 8)
+        }
+        .padding(.bottom, BarButtonGeometry.bottomGap)
     }
 
     // MARK: - Draft box (orange expand arrow on top + inline editor inside)
@@ -209,11 +244,14 @@ private struct SendButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "paperplane.fill")
+            // Empty draft → show a MIC (a pinch/tap dictates, it does NOT send an empty message);
+            // with text → a paperplane (a pinch/tap sends). Makes the empty-draft pinch read as
+            // "talk", not a dead/!send button.
+            Image(systemName: live ? "paperplane.fill" : "mic.fill")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity, minHeight: BarButtonGeometry.minHeight)
-                .barButtonBackground(corner: corner, fill: Color.pinch.opacity(live ? 1.0 : 0.4))
+                .barButtonBackground(corner: corner, fill: Color.pinch.opacity(live ? 1.0 : 0.55))
         }
         .buttonStyle(.plain)
         .handGestureShortcut(.primaryAction)
