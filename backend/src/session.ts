@@ -454,17 +454,21 @@ export class ClaudeSession implements AgentSession {
 
 /**
  * Context-window size (tokens) for a model id, used to scale the watch's usage ring.
- * The 4.x family ships a 200k window by default (Sonnet's 1M is an opt-in beta we don't
- * enable), so 200k is the right denominator for "how full is the context."
+ * Windows are per-model: Opus 4.8, Sonnet 4.6, and Fable 5 ship a 1M window; Haiku 4.5
+ * is 200k. Using a flat 200k made the ring read ~5x too full on every model except Haiku.
  */
 function contextWindowFor(model: string): number {
   switch (model) {
+    case "claude-haiku-4-5-20251001":
+      return 200_000;
     case "claude-opus-4-8":
     case "claude-sonnet-4-6":
-    case "claude-haiku-4-5-20251001":
     case "claude-fable-5":
+      return 1_000_000;
     default:
-      return 200_000;
+      // Unknown/future model: assume the current 1M default rather than the
+      // smaller Haiku window, so the ring under-reports rather than pinning full.
+      return 1_000_000;
   }
 }
 
