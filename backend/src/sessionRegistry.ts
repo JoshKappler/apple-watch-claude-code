@@ -92,6 +92,13 @@ export interface SessionState {
   lastActiveAt: number;
   /** True once created via the HTTP API (uses the shorter idle TTL). */
   http: boolean;
+  /**
+   * Recently-seen client prompt ids — idempotency for the watch's at-least-once
+   * delivery. The watch persists prompts to an outbox and re-sends any it never
+   * got a 2xx for (a POST parked/dropped on a flaky LTE handoff). Without dedup a
+   * retry would run the SAME turn twice. Bounded, insertion-ordered FIFO.
+   */
+  seenPromptIds: Set<string>;
 }
 
 /** Module-level registry of live sessions, so resume works across transports. */
@@ -230,6 +237,7 @@ export function reviveSession(
     deviceId: deviceId ?? rec.deviceId,
     lastActiveAt: Date.now(),
     http: true,
+    seenPromptIds: new Set(),
   };
 
   attachAgent(state, project, rec.mode, rec.sdkId);
@@ -274,6 +282,7 @@ export function createSession(
     deviceId: opts.deviceId,
     lastActiveAt: Date.now(),
     http: opts.http,
+    seenPromptIds: new Set(),
   };
 
   attachAgent(state, project, mode);

@@ -80,8 +80,8 @@ struct TranscriptView: View {
     @ViewBuilder
     private func row(for item: TranscriptItem) -> some View {
         switch item {
-        case let .user(_, text):
-            UserBubble(text: text)
+        case let .user(_, text, delivery):
+            UserBubble(text: text, delivery: delivery)
         case let .assistant(_, text):
             AssistantBubble(text: text, speaking: store.speaker.isSpeaking && isLast(item))
         case let .tool(use, ok):
@@ -104,13 +104,26 @@ struct TranscriptView: View {
 // horizontal space and have been removed.)
 private struct UserBubble: View {
     let text: String
+    var delivery: TranscriptItem.Delivery = .sent
     var body: some View {
-        Text(text)
-            .font(.system(size: 14))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(Color.pinch.opacity(0.9), in: .rect(cornerRadius: 12))
-            .foregroundStyle(.white)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(text)
+                .font(.system(size: 14))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            // A user prompt is never silently lost: show "Sending…" until the backend confirms
+            // delivery (2xx), or "Not sent" if it terminally failed. Nothing once sent.
+            if delivery != .sent {
+                HStack(spacing: 3) {
+                    Image(systemName: delivery == .sending ? "arrow.up.circle" : "exclamationmark.triangle.fill")
+                    Text(delivery == .sending ? "Sending…" : "Not sent")
+                }
+                .font(.system(size: 9))
+                .foregroundStyle(delivery == .sending ? Color.white.opacity(0.7) : Color.yellow)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(Color.pinch.opacity(0.9), in: .rect(cornerRadius: 12))
+        .foregroundStyle(.white)
     }
 }
 

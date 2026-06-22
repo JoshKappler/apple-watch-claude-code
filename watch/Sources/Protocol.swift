@@ -96,7 +96,7 @@ struct ProjectRef: Codable, Identifiable, Hashable, Sendable {
 /// We hand-roll `encode` so the discriminator and payload land in one flat object.
 enum ClientMsg: Encodable, Sendable {
     case auth(token: String, deviceId: String?, resumeSessionId: String?)
-    case prompt(text: String)
+    case prompt(id: String, text: String)
     case permissionDecision(requestId: String, decision: Decision, note: String?, remember: Bool?)
     case setMode(mode: PermissionMode)
     case cancel
@@ -108,7 +108,7 @@ enum ClientMsg: Encodable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case type, token, protocolVersion, deviceId, resumeSessionId
-        case text, requestId, decision, note, remember, mode, projectId, t
+        case text, promptId, requestId, decision, note, remember, mode, projectId, t
     }
 
     func encode(to encoder: Encoder) throws {
@@ -121,8 +121,9 @@ enum ClientMsg: Encodable, Sendable {
             try c.encodeIfPresent(deviceId, forKey: .deviceId)
             try c.encodeIfPresent(resumeSessionId, forKey: .resumeSessionId)
 
-        case let .prompt(text):
+        case let .prompt(id, text):
             try c.encode("prompt", forKey: .type)
+            try c.encode(id, forKey: .promptId)
             try c.encode(text, forKey: .text)
 
         case let .permissionDecision(requestId, decision, note, remember):

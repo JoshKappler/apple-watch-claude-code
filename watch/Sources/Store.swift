@@ -51,14 +51,19 @@ typealias Store = PinchStore
 
 /// One renderable item in the scrolling transcript.
 enum TranscriptItem: Identifiable {
-    case user(id: UUID = UUID(), text: String)
+    /// Delivery state of a user prompt, shown so a message is never SILENTLY lost: it reads
+    /// "sending" until the backend confirms its POST (2xx), then "sent". `failed` is a terminal
+    /// failure (e.g. auth). Drives the small status glyph on the user bubble.
+    enum Delivery: Sendable { case sending, sent, failed }
+
+    case user(id: UUID = UUID(), text: String, delivery: Delivery = .sent)
     case assistant(id: UUID = UUID(), text: String)
     case tool(ServerMsg.ToolUse, ok: Bool?)   // ok flips when the matching tool_result lands
     case notice(id: UUID = UUID(), text: String, warn: Bool)
 
     var id: String {
         switch self {
-        case let .user(id, _): return "u-\(id)"
+        case let .user(id, _, _): return "u-\(id)"
         case let .assistant(id, _): return "a-\(id)"
         case let .tool(use, _): return "t-\(use.id)"
         case let .notice(id, _, _): return "n-\(id)"
@@ -122,10 +127,6 @@ final class PinchStore: ObservableObject {
     @Published var projects: [ProjectRef] = []
     @Published var projectsLoading = false
     private var wantProjects = false   // re-request once `ready` if asked before the socket was up
-
-    // Prompts composed before the socket reached `.ready` queue here and flush in order
-    // the moment `ready` lands. Lets Send work the instant there's a message, even mid-reconnect.
-    private var pendingPrompts: [String] = []
 
     // Sub-systems (exposed so views can bind: mic state, speaking pulse, etc.).
     let speaker = Speaker()
@@ -240,8 +241,21 @@ final class PinchStore: ObservableObject {
             ws.configure(serverURL: url, token: token)
         } else {
             let client = WSClient(serverURL: url, token: token, deviceId: DeviceID.current)
-            client.onState = { [weak self] state in self?.connection = state }
+            client.onState = { [weak self] state in
+                guard let self else { return }
+                // Edge-detect the transition INTO .ready and drain the outbox. This is the ONLY
+                // hook that catches the soft-recovery .ready (emitted via onState, never as an
+                // onMessage(.ready) frame), so a queued prompt always re-sends the instant the
+                // path recovers — not just on a full session re-open.
+                let wasReady: Bool
+                if case .ready = self.connection { wasReady = true } else { wasReady = false }
+                self.connection = state
+                if case .ready = state, !wasReady { self.ws?.drainOutbox() }
+            }
             client.onMessage = { [weak self] msg in self?.handle(msg) }
+            client.onDelivery = { [weak self] id, delivered in
+                self?.markDelivery(id: id, delivered: delivered)
+            }
             self.ws = client
         }
         // Seed the client with the restored model/thinking so the FIRST /api/session body
@@ -312,28 +326,33 @@ final class PinchStore: ObservableObject {
     func send(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        transcript.append(.user(text: trimmed))
+        let id = UUID()
+        transcript.append(.user(id: id, text: trimmed, delivery: .sending))
         draft = ""
         caretIndex = 0
         // If we sent from the EXPANDED input (the draft box filling the screen), collapse it
         // back to one line so the transcript reclaims the screen and the reply is immediately
         // visible — you're done composing the moment you send.
         inputOwnsCrown = false
-        if case .ready = connection {
-            ws?.send(.prompt(text: trimmed))
-        } else {
-            pendingPrompts.append(trimmed)   // flushed in handle(.ready)
-        }
+        // Delivery is the transport's job now: the prompt goes into a DURABLE, persisted outbox
+        // and is retried until the backend confirms it (2xx). We do NOT gate on the (possibly
+        // stale) connection enum — that optimistic check, plus fire-and-forget POSTs, is exactly
+        // how messages were silently lost on a flaky LTE handoff. The bubble flips sending→sent
+        // via onDelivery; the backend dedups by id so retries never double-run a turn.
+        ws?.enqueuePrompt(id: id.uuidString, text: trimmed)
         Haptics.click()
     }
 
-    /// Ship any prompts queued while the socket was down. Called once `ready` lands.
-    private func flushPendingPrompts() {
-        guard !pendingPrompts.isEmpty else { return }
-        let queued = pendingPrompts
-        pendingPrompts.removeAll()
-        for text in queued {
-            ws?.send(.prompt(text: text))   // bubbles were already added in send()
+    /// Flip a user bubble's delivery state when the transport confirms (or terminally fails) its
+    /// POST. Matched by the bubble's UUID, which is also the prompt's outbox id.
+    private func markDelivery(id: String, delivered: Bool) {
+        guard let uuid = UUID(uuidString: id),
+              let idx = transcript.firstIndex(where: {
+                  if case let .user(bid, _, _) = $0 { return bid == uuid }
+                  return false
+              }) else { return }
+        if case let .user(bid, text, _) = transcript[idx] {
+            transcript[idx] = .user(id: bid, text: text, delivery: delivered ? .sent : .failed)
         }
     }
 
@@ -437,7 +456,8 @@ final class PinchStore: ObservableObject {
                 wantProjects = false
                 ws?.send(.listProjects)
             }
-            flushPendingPrompts()   // ship anything composed while the socket was down
+            // Outbox prompts are drained by WSClient on session-open and by the onState .ready
+            // edge (covers soft recovery) — no flush needed here.
 
         case let .projects(list):
             projects = list

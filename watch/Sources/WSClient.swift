@@ -56,6 +56,12 @@ enum ConnectionState: Equatable, Sendable {
     }
 }
 
+/// One undelivered prompt in the durable outbox (see WSClient.outbox).
+private struct OutboxItem: Codable, Sendable {
+    let id: String
+    let text: String
+}
+
 /// Owns the HTTP session lifecycle. State is confined to `queue`; callbacks hop to main.
 /// (Class name kept as `WSClient` so the rest of the app is untouched, even though the
 /// transport is now HTTP.)
@@ -69,8 +75,15 @@ final class WSClient: NSObject, @unchecked Sendable {
     // Callbacks — invoked on the main actor by the Store.
     var onState: (@MainActor (ConnectionState) -> Void)?
     var onMessage: (@MainActor (ServerMsg) -> Void)?
+    /// Per-prompt delivery confirmation: (promptId, delivered). The Store flips the user bubble
+    /// from "sending" to "sent" once its /api/prompt POST returns 2xx.
+    var onDelivery: (@MainActor (String, Bool) -> Void)?
 
     private var session: URLSession!
+    /// A SEPARATE, fail-fast URLSession for SENDS (prompts). waitsForConnectivity=false + short
+    /// timeouts so a prompt on a dying path ERRORS quickly (then the outbox retries) instead of
+    /// parking until the app suspends and the request dies in flight — the reported LTE bug.
+    private var sendSession: URLSession!
 
     /// The live agent session id from the last /api/session, used by poll + all sends.
     private var sessionId: String?
@@ -127,13 +140,25 @@ final class WSClient: NSObject, @unchecked Sendable {
     /// first failure. We count consecutive poll failures and only surface a degraded state
     /// after this many in a row; any success resets the counter back to 0.
     private var consecutivePollFailures = 0
-    private let pollFailureThreshold = 3
+    private let pollFailureThreshold = 2
     /// The last state we actually emitted, so we can COALESCE: identical states are never
     /// re-emitted (stops the pill flapping connected/reconnecting/connected on every tick).
     private var lastEmittedState: ConnectionState?
     /// True once the poll loop has degraded to "reconnecting" so we know to announce the
     /// recovery (a single .ready emission) when polls start succeeding again.
     private var pollDegraded = false
+
+    /// Durable prompt outbox — the SINGLE source of truth for "messages not yet confirmed
+    /// delivered." Every prompt is written here BEFORE any network attempt and removed ONLY on a
+    /// 2xx from /api/prompt, so a prompt can never be silently lost (parked POST, dropped on
+    /// suspend, fired on a stale "connected" state). Persisted per-device so it survives relaunch.
+    private var outbox: [OutboxItem] = []
+    /// Prompt ids with a POST currently in flight, so a redrain doesn't double-fire the same id
+    /// while one attempt is pending. (Backend dedups by promptId, so a stray double-send is safe.)
+    private var inflight: Set<String> = []
+    /// At most one pending retry timer at a time (a transient send failure self-heals).
+    private var outboxRetryTask: Task<Void, Never>?
+    private var outboxKey: String { "pinch.outbox.\(deviceId)" }
 
     /// Serial queue that confines all internal state mutation.
     private let queue = DispatchQueue(label: "com.josh.pinch.http")
@@ -160,12 +185,37 @@ final class WSClient: NSObject, @unchecked Sendable {
         config.allowsExpensiveNetworkAccess = true
         config.allowsConstrainedNetworkAccess = true
         config.timeoutIntervalForRequest = 30
+        // Cap the WHOLE resource load (INCLUDING time parked waiting-for-connectivity) so a poll
+        // can never wedge the single-flight loop forever on a dead interface: it errors, the loop
+        // ticks, the failure debounce trips, and we redrive. Default is 7 DAYS — long enough for a
+        // parked poll to silently stall the loop until the app is force-quit.
+        config.timeoutIntervalForResource = 25
         // No custom delegate queue needed for dataTask completions; default session is fine,
         // but we keep a delegate for the waiting-for-connectivity diagnostic.
         let opQueue = OperationQueue()
         opQueue.underlyingQueue = queue
         opQueue.maxConcurrentOperationCount = 1
         self.session = URLSession(configuration: config, delegate: self, delegateQueue: opQueue)
+
+        // SEND session: fail FAST. A prompt sent during the Wi-Fi/phone-relay → standalone-LTE
+        // handoff must NOT park (parking + app-suspend = the prompt dies in flight — the reported
+        // bug). Short timeouts surface the failure quickly so the durable outbox retries on a live
+        // path. No delegate; completions are hopped onto `queue` explicitly.
+        let sendConfig = URLSessionConfiguration.default
+        sendConfig.waitsForConnectivity = false
+        sendConfig.allowsCellularAccess = true
+        sendConfig.allowsExpensiveNetworkAccess = true
+        sendConfig.allowsConstrainedNetworkAccess = true
+        sendConfig.timeoutIntervalForRequest = 12
+        sendConfig.timeoutIntervalForResource = 12
+        self.sendSession = URLSession(configuration: sendConfig)
+
+        // Restore prompts that weren't confirmed delivered before the app was last killed, so they
+        // re-send on the next live session instead of being lost with the process.
+        if let data = UserDefaults.standard.data(forKey: "pinch.outbox.\(deviceId)"),
+           let saved = try? JSONDecoder().decode([OutboxItem].self, from: data) {
+            self.outbox = saved
+        }
         startPathMonitor()
     }
 
@@ -343,6 +393,7 @@ final class WSClient: NSObject, @unchecked Sendable {
             }
 
             self.startPolling()
+            self.drainLocked()   // ship any outbox prompts against the new/resumed session
         }
         task.resume()
     }
@@ -373,6 +424,7 @@ final class WSClient: NSObject, @unchecked Sendable {
     private func teardown(notify: Bool) {
         pollTask?.cancel(); pollTask = nil
         sessionId = nil
+        inflight.removeAll()   // a recreate re-drains the outbox from scratch on the new session
         if notify { emit(.disconnected) }
     }
 
@@ -585,8 +637,10 @@ final class WSClient: NSObject, @unchecked Sendable {
         case .auth, .ping:
             return   // no-op on HTTP transport.
 
-        case let .prompt(text):
-            postJSON(path: "/api/prompt", body: ["text": text])
+        case let .prompt(id, text):
+            // Prompts are durable now — enqueue to the outbox + drain (confirmed delivery), never
+            // fire-and-forget. (The Store calls enqueuePrompt directly; this keeps send() correct.)
+            enqueueLocked(id: id, text: text)
 
         case let .permissionDecision(requestId, decision, note, remember):
             var body: [String: Any] = ["requestId": requestId, "decision": decision.rawValue]
@@ -672,6 +726,119 @@ final class WSClient: NSObject, @unchecked Sendable {
             Task { @MainActor [weak self] in self?.onMessage?(msg) }
         }
         task.resume()
+    }
+
+    // MARK: - Prompt outbox (durable, confirmed delivery)
+
+    /// Queue a prompt for guaranteed-at-least-once delivery. Called by the Store on send.
+    func enqueuePrompt(id: String, text: String) {
+        queue.async { self.enqueueLocked(id: id, text: text) }
+    }
+
+    /// Public drain trigger. The Store calls this on the connection→.ready EDGE, which is the ONLY
+    /// place the soft-recovery .ready surfaces (notePollSuccess emits it via onState, never as an
+    /// onMessage(.ready) frame) — so without this an outbox drain would miss every soft recovery.
+    func drainOutbox() {
+        queue.async { self.drainLocked() }
+    }
+
+    private func enqueueLocked(id: String, text: String) {
+        outbox.append(OutboxItem(id: id, text: text))
+        // Hard cap so an extended outage can't grow the outbox without bound.
+        if outbox.count > 50 { outbox.removeFirst(outbox.count - 50) }
+        persistOutbox()
+        drainLocked()
+    }
+
+    /// Send every queued prompt that isn't already in flight. Idempotent: the backend dedups by
+    /// promptId, so a redrain racing an in-flight POST is harmless.
+    private func drainLocked() {
+        guard sessionId != nil, !outbox.isEmpty else { return }
+        for item in outbox where !inflight.contains(item.id) {
+            inflight.insert(item.id)
+            sendPromptPOST(item)
+        }
+    }
+
+    /// POST one outbox item via the fail-fast send session. Removes it from the outbox ONLY on a
+    /// 2xx; on transient failure it stays queued and retries; on 410 it recreates the session and
+    /// the prompt re-drains against the new one; on auth failure we surface .failed.
+    private func sendPromptPOST(_ item: OutboxItem) {
+        guard let sessionId, let url = makeAPIURL(path: "/api/prompt"),
+              let data = try? JSONSerialization.data(withJSONObject: [
+                  "sessionId": sessionId, "promptId": item.id, "text": item.text,
+              ]) else {
+            inflight.remove(item.id)
+            return
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.httpBody = data
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let task = sendSession.dataTask(with: req) { [weak self] _, response, error in
+            guard let self else { return }
+            self.queue.async {
+                self.inflight.remove(item.id)
+                if let nsErr = error as NSError? {
+                    NSLog("[PINCH-HTTP] /api/prompt error id=%@ domain=%@ code=%ld desc=%@",
+                          item.id, nsErr.domain, nsErr.code, nsErr.localizedDescription)
+                    self.notePollFailure()       // the path is sick — degrade the pill
+                    self.scheduleOutboxRetry()   // ...and try again shortly (stays queued)
+                    return
+                }
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                switch code {
+                case 200, 202:
+                    self.removeFromOutbox(item.id)
+                    self.reportDelivery(item.id, delivered: true)
+                case 410:
+                    NSLog("[PINCH-HTTP] /api/prompt → 410; recreating session, prompt stays queued")
+                    self.sessionId = nil
+                    self.resumeSessionId = nil
+                    if self.shouldStayConnected { self.openSession() }  // drains on the new session
+                case 401, 403:
+                    NSLog("[PINCH-HTTP] /api/prompt → %ld (auth)", code)
+                    self.shouldStayConnected = false
+                    self.teardown(notify: false)
+                    self.emit(.failed("Auth failed — check your token."))
+                default:
+                    NSLog("[PINCH-HTTP] /api/prompt → %ld id=%@", code, item.id)
+                    self.notePollFailure()
+                    self.scheduleOutboxRetry()
+                }
+            }
+        }
+        task.resume()
+    }
+
+    private func removeFromOutbox(_ id: String) {
+        outbox.removeAll { $0.id == id }
+        persistOutbox()
+    }
+
+    private func persistOutbox() {
+        if let data = try? JSONEncoder().encode(outbox) {
+            UserDefaults.standard.set(data, forKey: outboxKey)
+        }
+    }
+
+    /// One pending retry at a time; a transient send failure self-heals after a short delay even
+    /// without another trigger (poll-success recovery and reconnect also redrain).
+    private func scheduleOutboxRetry() {
+        guard !outbox.isEmpty, shouldStayConnected, outboxRetryTask == nil else { return }
+        outboxRetryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            self?.queue.async {
+                self?.outboxRetryTask = nil
+                self?.drainLocked()
+            }
+        }
+    }
+
+    private func reportDelivery(_ id: String, delivered: Bool) {
+        Task { @MainActor [weak self] in self?.onDelivery?(id, delivered) }
     }
 
     // MARK: - URL construction

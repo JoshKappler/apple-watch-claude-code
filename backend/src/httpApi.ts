@@ -287,6 +287,24 @@ async function handlePrompt(
     sendJson(res, 400, { error: "missing_text" });
     return;
   }
+  // Idempotency: the watch persists prompts to a durable outbox and re-sends any it
+  // never got a 2xx for (a POST that parked/dropped during an LTE handoff, or one
+  // whose ack died with a suspended app). Dedup by the client-generated promptId so
+  // an at-least-once retry can't run the same turn twice. (Backwards-compatible: an
+  // older client that omits promptId just isn't deduped, same as before.)
+  const promptId = asString(body.promptId);
+  if (promptId) {
+    if (state.seenPromptIds.has(promptId)) {
+      sendJson(res, 202, { ok: true, duplicate: true });
+      return;
+    }
+    state.seenPromptIds.add(promptId);
+    // Bound the set (Set preserves insertion order → evict the oldest).
+    if (state.seenPromptIds.size > 64) {
+      const oldest = state.seenPromptIds.values().next().value;
+      if (oldest !== undefined) state.seenPromptIds.delete(oldest);
+    }
+  }
   // Fire the turn; events stream into the session's event log asynchronously.
   void state.agent.start(text);
   sendJson(res, 202, { ok: true });
