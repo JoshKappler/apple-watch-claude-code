@@ -124,6 +124,13 @@ export interface AgentSession {
   setMode(mode: PermissionMode): void;
   /** Change model and/or thinking level; applies to the next turn (and live query if running). */
   setConfig(cfg: { model?: string; thinking?: ThinkingLevel }): void;
+  /**
+   * Re-emit the last-known context-occupancy frame, if any. Called on RECONNECT so the watch's
+   * usage ring is repainted with the real value immediately on reopen — a cold-launched watch
+   * resets its ring, and otherwise it would read empty/stale until the next turn produces usage.
+   * No-op before any occupancy is known.
+   */
+  resendContext(): void;
   /** The Anthropic session id, once known (for resume). */
   readonly sessionId: string | undefined;
 }

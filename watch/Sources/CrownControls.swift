@@ -67,7 +67,7 @@ struct CrownPicker<Item: Identifiable>: View {
                     let clamped = min(max(Int(v.rounded()), 0), max(items.count - 1, 0))
                     if clamped != index {
                         index = clamped
-                        WKInterfaceDevice.current().play(.click)   // per-row tick
+                        Haptics.click()                            // strong per-row tick
                         withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(index, anchor: .center) }
                     }
                 }
@@ -134,12 +134,12 @@ struct CrownPicker<Item: Identifiable>: View {
         guard items.indices.contains(i) else { return }
         index = i
         value = Double(i)
-        WKInterfaceDevice.current().play(.click)
+        Haptics.click()
     }
 
     private func commit(at i: Int) {
         guard items.indices.contains(i) else { return }
-        WKInterfaceDevice.current().play(.success)
+        Haptics.success()
         onCommit(items[i])
     }
 }

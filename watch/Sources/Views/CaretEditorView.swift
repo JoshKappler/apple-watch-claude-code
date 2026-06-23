@@ -70,7 +70,14 @@ struct InlineDraftEditor: View {
         // inputOwnsCrown, so it can't scroll while editing.
         .onChange(of: ownsCrown) { _, owns in
             if owns {
-                caretIndex = clampedCaret(caretIndex)
+                // Land the caret at the END of existing text, not a stale 0. caretIndex defaults to
+                // 0 and resets to 0 after each send, so expanding the editor over a non-empty draft
+                // would otherwise leave the caret at the FRONT — and the next dictation/insert would
+                // bury the existing text behind the new speech (the "long dictation loses its front,
+                // only the latest is there" bug). A caret at 0 was never deliberately placed there;
+                // seed it to the tail so dictation appends. (A caret the user crowned mid-text is
+                // non-zero and is preserved.)
+                caretIndex = clampedCaret(caretIndex == 0 && !text.isEmpty ? text.count : caretIndex)
                 caretValue = Double(caretIndex)
                 Task { @MainActor in focused = true }
             } else {
@@ -82,7 +89,15 @@ struct InlineDraftEditor: View {
             let v = Double(clampedCaret(c))
             if abs(v - caretValue) > 0.5 { caretValue = v }
         }
-        .onAppear { if ownsCrown { focused = true; caretValue = Double(clampedCaret(caretIndex)) } }
+        .onAppear {
+            if ownsCrown {
+                focused = true
+                // Same end-seed as the ownsCrown handler: a view that mounts already expanded over
+                // existing text must not leave the caret at a stale 0 (would prepend dictation).
+                caretIndex = clampedCaret(caretIndex == 0 && !text.isEmpty ? text.count : caretIndex)
+                caretValue = Double(clampedCaret(caretIndex))
+            }
+        }
     }
 
     // MARK: Collapsed — inert one-line preview (no dictation on tap; that's the mic button now).
@@ -128,9 +143,16 @@ struct InlineDraftEditor: View {
             .modifier(CrownDriver(caretValue: $caretValue, charCount: text.count))
             .onChange(of: caretValue) { _, v in
                 let c = clampedCaret(Int(v.rounded()))
-                if c != caretIndex { caretIndex = c }
-                withAnimation(.easeOut(duration: 0.12)) {
-                    proxy.scrollTo(caretAnchorID, anchor: .center)
+                // One STRONG click per character the caret actually steps over. We fire it ourselves
+                // (the system crown haptic is off in CrownDriver) so it's the app-wide `firmTap`, not
+                // watchOS's faint default — and only when the index truly changes, so a programmatic
+                // caret move (dictation jump) re-syncing caretValue doesn't click.
+                if c != caretIndex {
+                    caretIndex = c
+                    Haptics.click()
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        proxy.scrollTo(caretAnchorID, anchor: .center)
+                    }
                 }
             }
             // Leading back-swipe (←) = delete the previous word — from ANYWHERE in the box.
@@ -278,9 +300,12 @@ struct InlineDraftEditor: View {
     }
 }
 
-/// Binds the crown to the caret in EDIT mode: 0…charCount, a haptic tick per character step.
+/// Binds the crown to the caret in EDIT mode: 0…charCount, one step per character.
 /// Binding the crown to this focused child is what claims crown ownership for caret editing.
-/// SCROLL mode no longer uses this — it relies on the ScrollView's built-in native crown scroll.
+/// The SYSTEM crown haptic is OFF (`isHapticFeedbackEnabled: false`): it's a faint default tick we
+/// can't strengthen, so instead the `.onChange(of: caretValue)` handler plays our own strong
+/// `Haptics.click()` once per character. SCROLL mode doesn't use this — it relies on the
+/// ScrollView's built-in native crown scroll.
 private struct CrownDriver: ViewModifier {
     @Binding var caretValue: Double
     let charCount: Int
@@ -288,7 +313,7 @@ private struct CrownDriver: ViewModifier {
     func body(content: Content) -> some View {
         content.digitalCrownRotation(
             $caretValue, from: 0, through: Double(max(charCount, 0)), by: nil,
-            sensitivity: .low, isContinuous: false, isHapticFeedbackEnabled: true
+            sensitivity: .low, isContinuous: false, isHapticFeedbackEnabled: false
         )
     }
 }

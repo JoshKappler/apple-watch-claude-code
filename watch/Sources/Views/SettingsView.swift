@@ -160,7 +160,7 @@ struct SettingsView: View {
                 // and decides whether to speak). Replaces the old @AppStorage speakerMuted toggle.
                 Toggle("Speak replies", isOn: $store.ttsEnabled)
                     .tint(.pinch)
-                    .sensoryFeedback(.selection, trigger: store.ttsEnabled)
+                    .onChange(of: store.ttsEnabled) { _, _ in Haptics.click() }   // strong flip tap
                 Text("Watch TTS can be silent without AirPods/Bluetooth audio. A haptic always fires regardless, so you still feel each reply.")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)

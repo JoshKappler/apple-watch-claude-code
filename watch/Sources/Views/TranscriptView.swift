@@ -51,15 +51,17 @@ struct TranscriptView: View {
     /// `crownHapticStep`.)
     private let crownPointsPerUnit: Double = 6.5
     /// Points of scroll between haptic ticks — the crown's "click" cadence. A MANUAL tick, decoupled
-    /// from scroll speed. Kept SMALL (1.5) so a slow, deliberate turn ticks densely; the machine-gun
-    /// that a small step would cause on a fast spin is bounded by `crownTickMinInterval` instead (see
-    /// the handler), not by widening this. Each tick is `Haptics.scrollTick()` (firmer than `.click`).
-    private let crownHapticStep: Double = 1.5
-    /// Minimum wall-clock time between scroll ticks. This is the real fix for "it keeps clicking when
-    /// I'm not turning": the Digital Crown COASTS on inertia after you let go, so `crownUnits` keeps
-    /// changing with no hand on it and the per-distance tick would keep firing — tracking the scroll,
-    /// not the rotation. Capping the RATE turns that coast into a few discrete detents that taper as
-    /// it slows and stop when it stops, the way the native crown feels. 0.05s ⇒ at most ~20 ticks/s.
+    /// from scroll speed. Kept small (0.38) so a deliberate turn ticks densely — the "lots of clicks,
+    /// very haptic dial" feel. The machine-gun a tiny step would cause on a fast spin is bounded by
+    /// `crownTickMinInterval` instead (see the handler), not by widening this. Each tick is
+    /// `Haptics.scrollTick()` — a crisp SILENT `.start` tap (no alert tone).
+    private let crownHapticStep: Double = 0.38
+    /// Minimum wall-clock time between scroll ticks. The real fix for "it keeps clicking when I'm not
+    /// turning": the Digital Crown COASTS on inertia after you let go, so `crownUnits` keeps changing
+    /// with no hand on it and the per-distance tick would keep firing — tracking the scroll, not the
+    /// rotation. Capping the RATE turns that coast into discrete detents that taper as it slows and
+    /// stop when it stops. 0.05s (~20 ticks/s) is the ceiling for taps that still feel DISCRETE —
+    /// faster (e.g. 0.03/33-per-sec) smears even a silent tap into one continuous buzz, not ticks.
     private let crownTickMinInterval: TimeInterval = 0.05
     /// Wall-clock time of the last tick actually played — the throttle anchor for `crownTickMinInterval`.
     @State private var lastTickAt: Date = .distantPast
@@ -143,14 +145,22 @@ struct TranscriptView: View {
         // points of PHYSICAL scroll (programmatic auto-follow writes are skipped so streaming is silent).
         .onChange(of: crownUnits) { _, u in
             let y = min(u * crownPointsPerUnit, Double(maxScroll))
+            // A PROGRAMMATIC write (auto-follow pinning to the floor) must NEVER touch `following`
+            // or tick — only PHYSICAL rotation decides whether we're following. This matters most
+            // during a bulk history reload on reopen: `maxScroll` balloons as rows stream in, so by
+            // the time this handler runs the pinned crown value is below the new floor and `atBottom`
+            // would read false — flipping `following` off and stranding the feed at the TOP. The
+            // caller already did the scroll (pinToFloorIfFollowing), so just resync and bail.
+            if crownWriteIsProgrammatic {
+                crownWriteIsProgrammatic = false
+                lastHapticY = y                      // resync anchor, no tick
+                return
+            }
             let atBottom = y >= Double(maxScroll) - bottomBand
             following = atBottom
             if atBottom { scrollPosition.scrollTo(edge: .bottom) }
             else { scrollPosition.scrollTo(y: y) }
-            if crownWriteIsProgrammatic {
-                crownWriteIsProgrammatic = false
-                lastHapticY = y                      // resync anchor, no tick
-            } else if abs(y - lastHapticY) >= crownHapticStep {
+            if abs(y - lastHapticY) >= crownHapticStep {
                 lastHapticY = y                      // advance the distance anchor every step…
                 // …but only PLAY a tick if enough time has passed. A slow turn crosses a step every
                 // so often → dense ticks; a fast spin or the inertial coast crosses many per second →

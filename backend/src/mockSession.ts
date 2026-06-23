@@ -78,6 +78,14 @@ export class MockSession implements AgentSession {
     // Mock has no real model/thinking; accept and ignore for interface parity.
   }
 
+  resendContext(): void {
+    // Repaint the ring on reconnect with the fake running occupancy (interface parity with the
+    // real session, and keeps the mock's ring honest across an app reopen).
+    this.deps.send(
+      srv.context(this.contextUsed, mockContextWindowFor(this.deps.model)),
+    );
+  }
+
   compact(): void {
     // Fake the real session's compaction so the watch's Compact button is exercisable end-to-end in
     // mock mode: shrink the running occupancy, report it, and surface the same notice + clean turn.

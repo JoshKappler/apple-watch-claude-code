@@ -75,9 +75,10 @@ struct ComposerView: View {
     /// on an empty one). So the pinch only SENDS when you're not editing and there's text.
     private func primaryAction() {
         if draftIsEmpty {
+            Haptics.click()   // press feedback NOW — the dictation result's own click lands later
             Dictation.present { store.dictateAtCaret($0) }
         } else {
-            store.send(store.draft)
+            store.send(store.draft)   // send() already clicks
         }
     }
 
@@ -135,6 +136,7 @@ struct ComposerView: View {
                           tint: .pinch,
                           label: "Dictate",
                           corner: .none) {
+                    Haptics.click()   // press feedback NOW; the dictation result clicks again when it lands
                     // Expanded/editing → insert at the caret; collapsed → append to end.
                     Dictation.present { store.dictateAtCaret($0) }
                 }

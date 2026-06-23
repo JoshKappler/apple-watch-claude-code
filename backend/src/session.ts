@@ -159,6 +159,14 @@ export class ClaudeSession implements AgentSession {
    * In-memory only, so a fresh session starts asking again.
    */
   private readonly rememberedTools = new Set<string>();
+  /**
+   * Last MAIN-THREAD occupancy (NUMERATOR) we emitted for the usage ring, cached so a reconnect can
+   * repaint the ring (resendContext) instead of leaving a cold-launched watch empty until the next
+   * turn. The DENOMINATOR stays the static `contextWindowFor` value (the CLI-matched 200k) on
+   * purpose — that scale is already validated; the long-standing inaccuracy was the numerator
+   * reading subagent/mid-tool frames, not the window.
+   */
+  private lastContextUsed = 0;
 
   constructor(deps: SessionDeps) {
     this.deps = deps;
@@ -533,10 +541,16 @@ The person has set your focus to the "${hint}" directory inside the project root
     const message = m.message as
       | { content?: unknown; usage?: Record<string, unknown> }
       | undefined;
-    // Report context-window occupancy for the watch's usage ring. An assistant
-    // message's `usage.input_tokens` (+ cached tokens) is the size of THIS request's
-    // input — i.e. how full the context window currently is.
-    this.reportContext(message?.usage);
+    // Report context-window occupancy for the watch's usage ring ONLY from MAIN-THREAD messages.
+    // A SUBAGENT's assistant message (parent_tool_use_id set / subagent_type present) carries the
+    // SUBAGENT's much smaller prompt size, not the main conversation's — letting it drive the ring
+    // makes it lurch down to a sub-step's occupancy. Last-write-wins is then correct: within the
+    // main thread each request's input grows monotonically, so the turn's final main message holds
+    // the true occupancy. (This is the long-standing inaccuracy — the ring was reading subagent and
+    // mid-tool frames the whole time.)
+    const isSubagent =
+      m.parent_tool_use_id != null || typeof m.subagent_type === "string";
+    if (!isSubagent) this.reportContext(message?.usage);
     const content = message?.content;
     if (!Array.isArray(content)) return;
     for (const block of content as Array<Record<string, unknown>>) {
@@ -576,7 +590,23 @@ The person has set your focus to the "${hint}" directory inside the project root
       n("cache_read_input_tokens") +
       n("cache_creation_input_tokens");
     if (used <= 0) return;
-    this.deps.send(srv.context(used, contextWindowFor(this.model)));
+    this.lastContextUsed = used;
+    const window = contextWindowFor(this.model);
+    // Silent by default (pino level=info); set LOG_LEVEL=debug to watch the exact numerator the ring
+    // gets, turn by turn. If the meter ever reads wrong again, compare these to the CLI's /context:
+    // a mismatch is now a NUMBER you can see, not a guess — which is what cost the prior fix attempts.
+    log.debug(
+      { used, window, pct: Math.round((used / window) * 100), model: this.model },
+      "ctx: occupancy frame",
+    );
+    this.deps.send(srv.context(used, window));
+  }
+
+  /** See AgentSession.resendContext — repaint the ring on reconnect from the cached occupancy. */
+  resendContext(): void {
+    if (this.lastContextUsed > 0) {
+      this.deps.send(srv.context(this.lastContextUsed, contextWindowFor(this.model)));
+    }
   }
 
   /** user message carrying tool_result blocks. */
@@ -609,6 +639,7 @@ The person has set your focus to the "${hint}" directory inside the project root
     const post =
       typeof meta?.post_tokens === "number" ? meta.post_tokens : undefined;
     if (post !== undefined && post > 0) {
+      this.lastContextUsed = post;
       this.deps.send(srv.context(post, contextWindowFor(this.model)));
     }
     const summary =

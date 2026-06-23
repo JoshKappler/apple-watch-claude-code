@@ -257,6 +257,10 @@ async function handleSession(
       // higher cursor would swallow every new event until our index caught back up to it.
       pushEvent(existing, srv.notice("info", "Reconnected — context restored."));
     }
+    // Repaint the usage ring on reopen: a cold-launched watch reset its ring, so refresh it from the
+    // live session's last-known occupancy instead of leaving it empty/stale until the next turn.
+    // No-op on a fresh revive (no occupancy yet — the next turn fills it).
+    existing.agent.resendContext();
     sendJson(res, 200, {
       sessionId: existing.sessionId,
       mode: existing.mode,

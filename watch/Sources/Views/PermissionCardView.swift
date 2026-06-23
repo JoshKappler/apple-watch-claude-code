@@ -47,7 +47,7 @@ struct PermissionCardView: View {
                 }
                 .toggleStyle(.switch)
                 .padding(.horizontal, 8)
-                .sensoryFeedback(.selection, trigger: remember)
+                .onChange(of: remember) { _, _ in Haptics.click() }   // strong flip tap
             }
 
             // Plain tap decision — the ONLY way to decide. The crown is no longer bound here, so a
