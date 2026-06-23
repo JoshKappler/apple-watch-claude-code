@@ -2,13 +2,38 @@
 //  TranscriptView.swift
 //  Scrollable conversation: user prompts, assistant text (with a speaking pulse),
 //  tool chips, and a subtle thinking indicator. Digital Crown scrolls it (ScrollView
-//  is crown-scrollable by default on watchOS); we auto-scroll to the newest item.
+//  is crown-scrollable by default on watchOS).
+//
+//  FOLLOW-THE-BOTTOM: by default the feed tracks the newest content so the latest activity
+//  stays in view. But auto-scroll only fires while we're "following". Crowning UP away from
+//  the bottom BREAKS AWAY (you can read backscroll while the agent keeps working — nothing
+//  yanks you down), and crowning back to the floor RE-ENGAGES following. The decision is made
+//  from the live scroll geometry (see `.onScrollGeometryChange` below), never from screen
+//  swipes — per project rule, scrolling is crown-only.
 //
 
 import SwiftUI
 
+/// A rounded snapshot of the scroll position (from `ScrollGeometry`) used to decide whether the
+/// feed should keep following the bottom. Rounded to whole points so sub-pixel jitter doesn't
+/// churn the follow state.
+private struct ScrollMetrics: Equatable {
+    var offsetY: CGFloat
+    var contentHeight: CGFloat
+    /// Points from the viewport's bottom edge to the content's bottom. ~0 (or negative) at the floor.
+    var distanceFromBottom: CGFloat
+}
+
 struct TranscriptView: View {
     @EnvironmentObject private var store: PinchStore
+
+    /// Whether the feed is currently tracking the bottom. Starts true; crowning up past the floor
+    /// turns it off, reaching the floor turns it back on. Auto-scroll is gated on this.
+    @State private var following = true
+
+    /// How close to the content's bottom (in points) still counts as "at the floor" — a forgiving
+    /// band so you don't have to land on the exact last pixel to re-engage following.
+    private let bottomBand: CGFloat = 24
 
     /// The agent is actively working — drives the rich thinking indicator (client-side).
     private var isWorking: Bool {
@@ -61,11 +86,38 @@ struct TranscriptView: View {
             // DEFAULT whenever nothing else holds crown focus. The expanded input is the ONLY
             // view that takes focus (and the crown); when it isn't focused, the crown falls back
             // to this ScrollView's default scroll. Making the chat focusable/gated KILLS scrolling.
+            //
+            // The single authority for follow-the-bottom. The transform pulls a rounded position
+            // snapshot off every scroll/layout tick; the action decides break-away vs. re-engage and
+            // glues to the floor while following. Content growth (a streamed delta lengthening the
+            // last bubble, a new tool chip, the thinking indicator) does NOT move the scroll offset,
+            // so it can never look like "the user scrolled up" — that's what stops the feed from
+            // fighting you when you've deliberately scrolled back to read.
+            .onScrollGeometryChange(for: ScrollMetrics.self) { geo in
+                ScrollMetrics(
+                    offsetY: geo.contentOffset.y.rounded(),
+                    contentHeight: geo.contentSize.height.rounded(),
+                    distanceFromBottom: (geo.contentSize.height - geo.contentOffset.y - geo.containerSize.height).rounded()
+                )
+            } action: { old, new in
+                let grew = new.contentHeight > old.contentHeight
+                let scrolledUp = new.offsetY < old.offsetY      // only the crown decreases the offset
+                let atFloor = new.distanceFromBottom <= bottomBand
+                // Crown up past the band → stop following (read freely while the agent works)…
+                if scrolledUp { following = false }
+                // …reach the floor → resume following (also rescues a tiny in-band nudge).
+                if atFloor { following = true }
+                // While following, pin to the bottom as content grows. Instant (no animation): this
+                // fires per streamed delta, and animating each tick would lag behind the text.
+                if following && grew { proxy.scrollTo("BOTTOM", anchor: .bottom) }
+            }
+            // Discrete catch-up for new items / the indicator appearing (and the initial fill, where
+            // the count goes 0 → N). Gated on `following` so it never yanks you down mid-read.
             .onChange(of: store.transcript.count) { _, _ in
-                scrollToBottom(proxy)
+                if following { scrollToBottom(proxy) }
             }
             .onChange(of: isWorking) { _, active in
-                if active { withAnimation { proxy.scrollTo("BOTTOM", anchor: .bottom) } }
+                if active && following { withAnimation { proxy.scrollTo("BOTTOM", anchor: .bottom) } }
             }
         }
     }
