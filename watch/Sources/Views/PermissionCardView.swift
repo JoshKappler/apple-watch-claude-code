@@ -1,8 +1,9 @@
 //
 //  PermissionCardView.swift
-//  The approve/decline gate. Appears full-screen when the agent is waiting on you.
-//  Title is risk-colored; the diff (edits) or command (bash) renders in a finger-scrollable
-//  monospace area; a prominent haptic fires on appear.
+//  The approve/decline gate. Docks as a NON-blocking bottom BAR when the agent is waiting on you —
+//  the transcript stays visible and crown-scrollable above it (see RootView.ConversationScreen).
+//  Title is risk-colored; the diff (edits) or command (bash) renders in a finger-scrollable,
+//  height-capped monospace area so the bar never starves the chat above.
 //
 //  THE DECISION IS TAP-ONLY. It used to be crown-driven (a CrownConfirm dial), but a request can
 //  appear WHILE you're crown-scrolling the chat — and binding crown rotation to allow/deny meant
@@ -22,30 +23,23 @@ struct PermissionCardView: View {
         VStack(spacing: 6) {
             header
 
-            // Diff / command / detail — finger-scrollable (crown is reserved for the decision).
-            ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
-                    if let detail = request.detail, request.diff == nil, request.command == nil {
-                        Text(detail)
-                            .font(.system(size: 12))
-                            .frame(maxWidth: .infinity, alignment: .leading)
+            // Diff / command / detail — finger-scrollable, HEIGHT-CAPPED so the bar stays a bottom
+            // dock and never starves the transcript above it. The crown is NOT bound here; it scrolls
+            // the chat. Only shown when there's something to inspect.
+            if hasDetail {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        detailContent
                     }
-                    if let command = request.command {
-                        CodeBlock(text: command, isDiff: false)
-                    }
-                    if let diff = request.diff {
-                        CodeBlock(text: diff, isDiff: true)
-                    }
-                    if request.command == nil, request.diff == nil, request.detail == nil {
-                        Text("\(request.tool) wants to run.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
+                // DEFINITE height (not just maxHeight): next to the greedy maxHeight:.infinity
+                // transcript above, a ScrollView with only a max collapses to zero on watchOS.
+                // Size it to the content, capped, so short commands stay compact and long diffs
+                // get a finger-scrollable window without starving the chat.
+                .frame(height: detailHeight)
             }
-            .frame(maxHeight: .infinity)
 
             if request.risk != .high {
                 Toggle(isOn: $remember) {
@@ -59,14 +53,61 @@ struct PermissionCardView: View {
             // request that appears while you're crown-scrolling the chat can't approve/deny itself.
             decisionButtons
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // Opaque, full-screen — this is a takeover gate; the transcript + composer
-        // behind it must NOT show through (a bare tint let everything bleed through).
-        .background {
-            Color.black.ignoresSafeArea()
-            riskColor.opacity(0.14).ignoresSafeArea()
+        .padding(.top, 8)
+        .frame(maxWidth: .infinity)
+        // A docked bottom bar (NOT a full-screen takeover): the transcript stays visible and
+        // crown-scrollable above it. Risk-tinted top border so it reads as an elevated panel.
+        // The haptic on appear is fired by the store (handle(.permissionRequest)), not here, so it
+        // doesn't double up.
+        .background(barBackground)
+    }
+
+    /// True when there's a diff/command/detail worth showing in the scrollable area.
+    private var hasDetail: Bool {
+        request.detail != nil || request.command != nil || request.diff != nil
+    }
+
+    /// Content-sized height for the detail scroller, capped so the bar never dominates the screen.
+    /// Code (diff/command) is measured by line count; prose detail by a rough wrap estimate.
+    private var detailHeight: CGFloat {
+        let cap: CGFloat = 64
+        if let code = request.diff ?? request.command {
+            let lines = code.split(separator: "\n", omittingEmptySubsequences: false).count
+            return min(CGFloat(lines) * 15 + 14, cap)
         }
-        .onAppear { Haptics.permissionNeeded() }
+        if let detail = request.detail {
+            let lines = max(1, detail.count / 26)   // ~26 chars/line at size 12 on the Ultra
+            return min(CGFloat(lines) * 15 + 14, cap)
+        }
+        return 0
+    }
+
+    @ViewBuilder
+    private var detailContent: some View {
+        if let detail = request.detail, request.diff == nil, request.command == nil {
+            Text(detail)
+                .font(.system(size: 12))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        if let command = request.command {
+            CodeBlock(text: command, isDiff: false)
+        }
+        if let diff = request.diff {
+            CodeBlock(text: diff, isDiff: true)
+        }
+    }
+
+    /// Elevated docked-panel background: rounded only on the TOP corners (it meets the screen's
+    /// bottom edge), filled dark, with a thin risk-colored top border. Extends past the bottom safe
+    /// area so the fill reaches the physical edge while the button content stays clear of the curve.
+    private var barBackground: some View {
+        UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16)
+            .fill(Color(white: 0.11))
+            .overlay(
+                UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16)
+                    .strokeBorder(riskColor.opacity(0.55), lineWidth: 1)
+            )
+            .ignoresSafeArea(.container, edges: .bottom)
     }
 
     private var header: some View {
@@ -114,7 +155,8 @@ struct PermissionCardView: View {
         .labelStyle(.titleAndIcon)
         .font(.system(size: 14, weight: .semibold))
         .padding(.horizontal, 6)
-        .padding(.bottom, 6)
+        // Clear the rounded screen-bottom curve (the bar background extends into the safe area).
+        .padding(.bottom, 10)
     }
 
     private var riskColor: Color {

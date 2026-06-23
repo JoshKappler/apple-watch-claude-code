@@ -521,6 +521,9 @@ final class PinchStore: ObservableObject {
         case let .permissionRequest(req):
             pendingPermission = req
             agentState = .waiting_permission
+            // Drop any stale expanded-input crown ownership so the transcript (not a half-open
+            // composer) holds the crown while the permission bar is up — the chat stays scrollable.
+            inputOwnsCrown = false
             Haptics.permissionNeeded()
 
         case let .modeChanged(newMode):

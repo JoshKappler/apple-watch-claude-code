@@ -2,8 +2,9 @@
 //  RootView.swift
 //  Ties the screens together. The main screen is the transcript with a fixed bottom
 //  composer; a connection/status indicator sits in the nav bar; toolbar buttons open
-//  mode, projects, and settings. A full-screen permission card takes over when the
-//  agent is waiting on an approval.
+//  mode, projects, and settings. When the agent is waiting on an approval, the composer
+//  slot swaps for a NON-blocking permission bar — the transcript stays visible and
+//  crown-scrollable above it (see ConversationScreen).
 //
 
 import SwiftUI
@@ -17,17 +18,8 @@ struct RootView: View {
         NavigationStack {
             ZStack {
                 Color.black.ignoresSafeArea()
-
                 ConversationScreen()
-
-                // Permission gate overlays everything when present.
-                if let req = store.pendingPermission {
-                    PermissionCardView(request: req)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .zIndex(1)
-                }
             }
-            .animation(.snappy, value: store.pendingPermission)
             // No navigationTitle — the app name is dead weight on a tiny screen, and the
             // system clock the OS draws at the very top can't be removed by an app anyway.
             // watchOS only renders ONE leading + ONE trailing toolbar item, so the top bar is:
@@ -130,18 +122,28 @@ private struct ConversationScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // When the input is expanded it owns the whole screen above the buttons: hide the
-            // transcript so the ComposerView's draft box can fill the vertical space (maxHeight
-            // .infinity). Collapsed, the transcript takes the space and the box is ~1 line.
-            if !store.inputOwnsCrown {
+            // Transcript fills the top whenever it's visible. It's hidden ONLY when the input is
+            // expanded to own the whole screen — but a pending permission overrides that, because you
+            // must be able to scroll the chat to judge the request.
+            if store.pendingPermission != nil || !store.inputOwnsCrown {
                 TranscriptView()
                     .frame(maxHeight: .infinity)
             }
-            ComposerView()                 // fixed bottom bar — holds the .primaryAction Send.
-                .frame(maxHeight: store.inputOwnsCrown ? .infinity : nil)
+
+            // Bottom slot: the permission decision BAR while the agent is waiting on you, otherwise
+            // the normal composer. The bar is NOT crown-focusable, so the crown keeps scrolling the
+            // transcript above — a request can never hijack your scroll or answer itself.
+            if let req = store.pendingPermission {
+                PermissionCardView(request: req)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else {
+                ComposerView()             // fixed bottom bar — holds the .primaryAction Send.
+                    .frame(maxHeight: store.inputOwnsCrown ? .infinity : nil)
+            }
         }
         .animation(.snappy, value: store.inputOwnsCrown)
         .animation(.snappy, value: store.chromeCollapsed)
+        .animation(.snappy, value: store.pendingPermission)
         // Extend the whole stack into the bottom safe area so the button row reaches the
         // physical bottom edge (it was floating ~1/8" high when the ignore was scoped to just
         // the HStack — a nested ignoresSafeArea doesn't push past the parent VStack's layout).
