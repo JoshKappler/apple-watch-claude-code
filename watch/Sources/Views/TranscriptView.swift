@@ -50,12 +50,19 @@ struct TranscriptView: View {
     /// than native (what the feed wants). (Speed only; the click cadence is independent — see
     /// `crownHapticStep`.)
     private let crownPointsPerUnit: Double = 6.5
-    /// Points of scroll between haptic ticks — the crown's "click" cadence. A MANUAL tick, so it's
-    /// decoupled from speed: retuning the pace never turns the click into a buzz. At most one tick
-    /// per crown `onChange`, so a small step can't machine-gun — it just makes every physical notch
-    /// of rotation click. 22 felt too sparse (only an occasional click); 3 is ~7x denser, a steady
-    /// fine-grained tick as you scroll.
-    private let crownHapticStep: Double = 3
+    /// Points of scroll between haptic ticks — the crown's "click" cadence. A MANUAL tick, decoupled
+    /// from scroll speed. Kept SMALL (1.5) so a slow, deliberate turn ticks densely; the machine-gun
+    /// that a small step would cause on a fast spin is bounded by `crownTickMinInterval` instead (see
+    /// the handler), not by widening this. Each tick is `Haptics.scrollTick()` (firmer than `.click`).
+    private let crownHapticStep: Double = 1.5
+    /// Minimum wall-clock time between scroll ticks. This is the real fix for "it keeps clicking when
+    /// I'm not turning": the Digital Crown COASTS on inertia after you let go, so `crownUnits` keeps
+    /// changing with no hand on it and the per-distance tick would keep firing — tracking the scroll,
+    /// not the rotation. Capping the RATE turns that coast into a few discrete detents that taper as
+    /// it slows and stop when it stops, the way the native crown feels. 0.05s ⇒ at most ~20 ticks/s.
+    private let crownTickMinInterval: TimeInterval = 0.05
+    /// Wall-clock time of the last tick actually played — the throttle anchor for `crownTickMinInterval`.
+    @State private var lastTickAt: Date = .distantPast
     /// True only while we're writing the crown value ourselves (auto-follow pinning to the floor), so
     /// a streaming reply that keeps snapping to the bottom never machine-guns clicks — only physical
     /// rotation ticks.
@@ -144,8 +151,16 @@ struct TranscriptView: View {
                 crownWriteIsProgrammatic = false
                 lastHapticY = y                      // resync anchor, no tick
             } else if abs(y - lastHapticY) >= crownHapticStep {
-                Haptics.click()                      // physical scroll crossed a step → tick
-                lastHapticY = y
+                lastHapticY = y                      // advance the distance anchor every step…
+                // …but only PLAY a tick if enough time has passed. A slow turn crosses a step every
+                // so often → dense ticks; a fast spin or the inertial coast crosses many per second →
+                // the rate cap collapses them into discrete detents, so the haptic tracks how you're
+                // turning the crown, not how far the view is sliding.
+                let now = Date()
+                if now.timeIntervalSince(lastTickAt) >= crownTickMinInterval {
+                    Haptics.scrollTick()
+                    lastTickAt = now
+                }
             }
         }
         // New items. A locally-sent USER prompt is an explicit "take me to the bottom" — re-engage

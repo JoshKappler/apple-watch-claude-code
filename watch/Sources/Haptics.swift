@@ -31,6 +31,11 @@ enum Haptics {
     /// Confirms a sent prompt / a cancel landed.
     static func click() { play(.click) }
 
+    /// Crown scroll detent — a FIRMER tap than `.click`, played as you physically scroll the
+    /// transcript. The caller time-throttles it so a fast spin (or the crown's inertial coast)
+    /// reads as discrete, evenly-spaced detents instead of a continuous buzz.
+    static func scrollTick() { play(.start) }
+
     /// Wrist-shake cancel landed.
     static func cancelled() { play(.directionDown) }
 }
