@@ -190,6 +190,10 @@ final class WSClient: NSObject, @unchecked Sendable {
         // ticks, the failure debounce trips, and we redrive. Default is 7 DAYS — long enough for a
         // parked poll to silently stall the loop until the app is force-quit.
         config.timeoutIntervalForResource = 25
+        // Skip ngrok's free-tier browser interstitial. The watch's URLSession isn't browser-like so
+        // it usually passes anyway, but this header makes it deterministic. Harmless elsewhere — a
+        // direct backend or a Cloudflare tunnel just ignores an unknown header.
+        config.httpAdditionalHeaders = ["ngrok-skip-browser-warning": "true"]
         // No custom delegate queue needed for dataTask completions; default session is fine,
         // but we keep a delegate for the waiting-for-connectivity diagnostic.
         let opQueue = OperationQueue()
@@ -208,6 +212,7 @@ final class WSClient: NSObject, @unchecked Sendable {
         sendConfig.allowsConstrainedNetworkAccess = true
         sendConfig.timeoutIntervalForRequest = 12
         sendConfig.timeoutIntervalForResource = 12
+        sendConfig.httpAdditionalHeaders = ["ngrok-skip-browser-warning": "true"]
         self.sendSession = URLSession(configuration: sendConfig)
 
         // Restore prompts that weren't confirmed delivered before the app was last killed, so they
