@@ -48,3 +48,25 @@ targets:
     #   • Extended Runtime sessions are use-case-gated by Apple; if you ever need one,
     #     add `com.apple.developer.watchkit.extended-runtime-session` to the entitlements
     #     and the matching capability here. We deliberately DO NOT request it (see README).
+
+# Define the scheme EXPLICITLY so XcodeGen writes a SHARED scheme
+# (Pinch.xcodeproj/xcshareddata/xcschemes/Pinch.xcscheme) that survives every
+# `xcodegen generate`. Without this, the project has no scheme after regeneration —
+# Xcode's autocreated user scheme gets wiped and Cmd-R (Run) silently does nothing
+# until you reopen the project. A committed shared scheme makes Run work immediately
+# on a fresh generate.
+schemes:
+  Pinch:
+    build:
+      targets:
+        Pinch: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
