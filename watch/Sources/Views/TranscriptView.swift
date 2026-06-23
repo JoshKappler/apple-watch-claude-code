@@ -112,12 +112,29 @@ struct TranscriptView: View {
                 if following && grew { proxy.scrollTo("BOTTOM", anchor: .bottom) }
             }
             // Discrete catch-up for new items / the indicator appearing (and the initial fill, where
-            // the count goes 0 → N). Gated on `following` so it never yanks you down mid-read.
-            .onChange(of: store.transcript.count) { _, _ in
+            // the count goes 0 → N). Gated on `following` so it never yanks you down mid-read…
+            .onChange(of: store.transcript.count) { old, new in
+                // …EXCEPT a locally-sent user prompt, which is an explicit "take me to the bottom":
+                // re-engage following and snap even if we'd crowned up to read backscroll. (Only the
+                // user's own bubble forces this — agent-driven growth still respects the follow state,
+                // so reading back while Claude works is never interrupted.)
+                if new > old, let last = store.transcript.last, case .user = last {
+                    following = true
+                }
                 if following { scrollToBottom(proxy) }
             }
             .onChange(of: isWorking) { _, active in
                 if active && following { withAnimation { proxy.scrollTo("BOTTOM", anchor: .bottom) } }
+            }
+            // Snap to the tail on (re)mount. Sending from the EXPANDED composer collapses the input
+            // (inputOwnsCrown → false), which RE-INSERTS this view with the just-sent bubble already
+            // present — and onChange(count) never fires for a value a view is BORN with, so without
+            // this the feed reappears stuck at the top with your message below the fold. Deferred one
+            // runloop so the (non-lazy) content is laid out before we target the anchor; instant (no
+            // animation) so it doesn't visibly scroll up from the top.
+            .onAppear {
+                following = true
+                DispatchQueue.main.async { proxy.scrollTo("BOTTOM", anchor: .bottom) }
             }
         }
     }
