@@ -44,9 +44,20 @@ something else). A disconnect/teardown uses `abort()`/`close()`.
 The SDK can locally reuse Claude Code OAuth creds, but Anthropic restricts subscription/claude.ai-login
 auth for third-party products built on the Agent SDK. So we ship with `ANTHROPIC_API_KEY` and document it.
 
+> **SUPERSEDED by #10a.** Subscription auth via the Mac's Claude Code login works and is now the
+> **default** (`PINCH_AUTH=subscription`). `apikey` mode (`ANTHROPIC_API_KEY`) is the opt-in alternative.
+
 ## 8. Transport: WebSocket; backend runs where the repos are; public via Cloudflare Tunnel
-- **WebSocket** (not REST polling): the session is a live bidirectional stream of deltas, tool events,
-  and permission round-trips. WS is the natural fit.
+> **UPDATED.** The WebSocket holds for the **browser simulator**, but the physical **watch shipped on
+> HTTP** (`/api/*` + a ~1.2s poll, `backend/src/httpApi.ts`): watchOS refuses `URLSessionWebSocketTask`
+> on the watch's network path, so a socket was never viable on the wrist. Same `ServerMsg`/`ClientMsg`
+> shapes, drained from a per-session event log. And the **default tunnel is now a stable ngrok free
+> static domain** (`PINCH_NGROK_DOMAIN`), not a quick/Cloudflare tunnel — a no-domain, never-changing URL
+> so restarts don't strand the baked watch build. The Cloudflare named-tunnel path remains scaffolded.
+
+- **WebSocket** (simulator) / **HTTP poll** (watch): the session is a live stream of deltas, tool events,
+  and permission round-trips. WS is the natural fit where it works; HTTP is the only thing that works on
+  the watch.
 - **Backend on the Mac** by default: it sees your *actual* working tree, including uncommitted changes.
   A **cloud mode** (Fly.io machine that clones from GitHub) is also provided for always-on, accepting it
   only sees pushed code. (Vercel is unsuitable for the WS/agent process — no persistent sockets even with
@@ -56,8 +67,12 @@ auth for third-party products built on the Agent SDK. So we ship with `ANTHROPIC
   rejected for this use — current WS drop/query-strip bugs make it unreliable for a cellular client.
 
 ## 9. Cellular realities baked into the protocol
-- **100s Cloudflare idle timeout** → the client sends an app-level `ping` every ~25s; the server replies
-  `pong` and also runs its own ws-level ping/terminate dead-socket sweep.
+- **100s Cloudflare idle timeout** → on the WebSocket (simulator) path the client sends an app-level
+  `ping` every ~25s; the server replies `pong` and runs its own ws-level dead-socket sweep. (The watch's
+  HTTP transport uses short requests, so a socket idle timeout doesn't apply to it.)
+- **Durable delivery (watch)** → prompts go into a persisted outbox, removed only on a confirmed 2xx and
+  retried otherwise; the backend dedups by client `promptId` so a retry can't double-run a turn. A
+  message sent during an LTE handoff is delivered on reconnect rather than lost.
 - **No background WebSocket on watchOS** → the socket only lives while the app is foreground. The client
   reconnects on activation with exponential backoff + jitter, and **resumes** the agent session
   (`resumeSessionId`) so a turn that ran while disconnected isn't lost. The backend buffers events per

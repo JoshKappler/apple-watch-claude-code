@@ -53,6 +53,23 @@ type PermissionResult =
 const DELTA_FLUSH_CHARS = 256;
 
 /**
+ * Appended to the Claude Code preset system prompt for every session. Orients the
+ * agent to the fact that it is talking to someone on an Apple Watch: replies are
+ * READ ALOUD (TTS) and shown on a ~tiny screen, so Markdown/punctuation tricks
+ * don't render and brevity matters. This shapes COMMUNICATION only — the actual
+ * coding work (tools, edits, rigor) is unchanged. Static string → prompt-cached
+ * with the rest of the preset.
+ */
+const WATCH_SYSTEM_APPEND = `You are being driven from an Apple Watch. The person speaks to you by voice, and your replies are read aloud and shown on a tiny watch screen. This changes how you should communicate (not how you do the work):
+
+- Write plain spoken text. There is NO Markdown rendering: asterisks, backticks, headers, bullet characters, tables, and emoji are not formatting here — they get read aloud literally or shown as raw symbols. Don't use them for emphasis or structure.
+- Be as brief as possible while still answering completely. Lead with the answer or the result. Cut preamble, restated questions, and filler. One or two sentences is usually the right length; a glanceable screen can't hold a wall of text.
+- When you genuinely need steps or choices, say them as a short numbered sequence in prose ("First… Second…", or "Option 1… Option 2…") so the person can answer by voice.
+- Don't dump file paths, code blocks, or raw command output — summarize what happened in words. Spell things out the way you would say them aloud.
+
+Do all coding, tool use, and verification exactly as rigorously as you normally would; only the wording of what you say back to the person should follow the rules above.`;
+
+/**
  * Async generator you can push into. Resolves the seeded prompt first, then any
  * follow-up turns. Ends only when `close()` is called.
  */
@@ -162,7 +179,11 @@ export class ClaudeSession implements AgentSession {
     const options: Record<string, unknown> = {
       cwd: this.deps.cwd,
       model: this.model,
-      systemPrompt: { type: "preset", preset: "claude_code" },
+      systemPrompt: {
+        type: "preset",
+        preset: "claude_code",
+        append: WATCH_SYSTEM_APPEND,
+      },
       includePartialMessages: true,
       abortController: this.abort,
       permissionMode: this.mode,

@@ -1,100 +1,120 @@
-# Status — what's done, what's verified, what needs you
+# Status — what's built and how it actually runs
 
-_Built autonomously while you were getting the charging cable. Everything below is on `main`._
+Current state of Pinch on `main`. The system is built, verified, and in daily use
+driving real Claude Code sessions from an Apple Watch Ultra over cellular.
 
 ## One line
-The whole system is written and the server side is **verified working end-to-end**. To actually talk to
-a repo from your wrist you need to do three things only you can do: add an API key, sign the watch app in
-Xcode with your Apple Developer account, and run the Cloudflare tunnel login once.
+
+The backend wraps the Claude Agent SDK against your local repos; a stable ngrok
+domain exposes it; the watch app drives it over HTTP from the wrist. To run your
+own, you do three things only you can: set `PINCH_PROJECT_ROOTS` + auth, reserve
+an ngrok domain, and sign the watch app in Xcode with your Apple Team.
 
 ---
 
-## What's built and verified ✅
+## What's built and verified
 
-| Piece | State | Evidence |
+| Piece | State | Notes |
 |---|---|---|
-| **Wire protocol** (`packages/protocol`) | Done | builds clean; 22 message types; Swift mirror matches exactly |
-| **Backend** (`backend`) | Done + **verified** | typechecks; runs; **smoke test passes** the full round-trip; bad token → 4401 |
-| **Simulator** (`simulator`) | Done + **verified** | typechecks; production build = 25 KB gzipped |
-| **watchOS app** (`watch`) | Source complete | 21 Swift files; all pass `swiftc -parse`; needs Xcode to compile/sign (see below) |
-| **Infra** (`infra`) | Done | Cloudflare Tunnel + launchd + Fly.io cloud mode + token gen + security; scripts pass `bash -n` |
+| **Wire protocol** (`packages/protocol`) | Done | Zod schemas + `PROTOCOL.md`; Swift mirror in `watch/Sources/Protocol.swift`. |
+| **Backend** (`backend`) | Done + verified | Two transports on one session model: WebSocket `/ws` (simulator) and HTTP `/api/*` (watch). Subscription auth by default. |
+| **Simulator** (`simulator`) | Done + verified | Browser "watch" over the WS path; the keyless end-to-end test rig. |
+| **watchOS app** (`watch`) | Done | Single-target watchOS 11 SwiftUI app; generated via XcodeGen; HTTP transport with a durable prompt outbox + session resume. |
+| **Infra** (`infra`) | Done | ngrok stable domain (primary), Cloudflare named-tunnel scaffolding, Fly.io cloud mode, launchd, token gen, `SECURITY.md`. |
 
-The smoke test (`scripts/smoke-test.mjs`) drove a real WebSocket session against the backend and confirmed:
-`auth → ready → prompt → thinking → streaming text → Read tool → permission request → (allow) → Edit tool
-→ spoken result → turn_complete → idle`. That's the entire interaction loop, including the async
-permission approval that the watch's ✓/✗ taps drive. It ran in **mock mode**, so no API key was needed to
-prove the plumbing.
+## How it runs now
+
+- **Transport.** The physical watch uses **HTTP request/response + a ~1.2s
+  poll** against `/api/*` (`backend/src/httpApi.ts`) — watchOS refuses
+  `URLSessionWebSocketTask` on the watch's network path. The Swift client class is
+  still named `WSClient` for historical reasons; it is HTTP. The browser simulator
+  uses the WebSocket at `/ws`. Both share the session map, agent wiring, event
+  log, resume rule, and idle sweep via `sessionRegistry.ts`.
+- **Tunnel.** A **stable ngrok free static domain** (`PINCH_NGROK_DOMAIN`). The
+  URL never changes, so restarts don't strand the baked watch build. Bring it up
+  by double-clicking `infra/start-pinch.command` (idempotent, detached).
+- **Auth to Anthropic.** `PINCH_AUTH=subscription` (default) uses the Mac's Claude
+  Code login (Claude Max/Pro keychain) — no API key. `apikey` mode uses
+  `ANTHROPIC_API_KEY`.
+- **Durable delivery.** Prompts go into a persisted outbox on the watch, removed
+  only on a confirmed 2xx; the backend dedups by client `promptId` so a retry
+  can't double-run a turn. A message sent during an LTE handoff is held and
+  delivered on reconnect rather than lost.
+- **Durable resume.** Session records persist to `backend/.pinch-sessions.json`,
+  so a backend restart or the idle sweep doesn't wipe Claude's context — the
+  session is revived with the SDK transcript reloaded.
+- **Watch-aware agent.** Every session appends a watch-orientation note to the
+  Claude Code system prompt (`WATCH_SYSTEM_APPEND` in `backend/src/session.ts`):
+  replies are read aloud and shown on a tiny screen, so the agent writes plain
+  text (no Markdown), keeps it brief, and offers choices as short numbered prose.
+  This shapes communication only; the coding work is unchanged.
 
 ## Try it right now (no watch, no API key)
+
 ```bash
 npm install
-PINCH_MOCK=1 PINCH_TOKEN=test-token npm run dev          # backend on ws://localhost:8787/ws
+PINCH_MOCK=1 PINCH_TOKEN=test-token npm run dev      # backend, mock agent
 # in another shell:
-PINCH_TOKEN=test-token node scripts/smoke-test.mjs        # watch it round-trip
-npm run sim                                                # or open the browser watch and click around
+PINCH_TOKEN=test-token npm run smoke                  # full round-trip over WS
+npm run sim                                            # or click around the browser watch
 ```
 
 ---
 
-## What needs you (the parts I can't do autonomously)
+## What needs you
 
-1. **Nothing for auth — it runs on your Claude Max subscription.** `PINCH_AUTH=subscription` is the default
-   and uses the Claude Code login already on this Mac (no API key). Verified: a real prompt round-tripped on
-   your plan with no key. Just run `./setup.sh` (generates your `PINCH_TOKEN`), set `PINCH_PROJECTS` to the
-   repo path(s) you want it editing, and `PINCH_MOCK=0`.
-2. **Xcode + your Apple Developer account** — to put the app on your Ultra. `xcodegen` is installed; run
-   `cd watch && xcodegen generate && open Pinch.xcodeproj`. Set your **Team**, change the bundle id to one
-   you own, Run on the watch. This Mac only has Command Line Tools (no watchOS SDK), so I couldn't compile
-   or sign it — but the source is complete, all 19 files pass `swiftc -parse`, and the protocol mirror is
-   exact. Full details in `watch/README.md`.
-3. **Assign the Action button → dictation (one-time, on the watch).** After the app is installed: open the
-   Shortcuts app, the "Speak a message in Pinch" App Shortcut appears; then Settings → Action Button → First
-   Press → Shortcut → pick it. Press the orange button → Pinch opens listening.
-4. **Cloudflare tunnel login (once)** — for the public cellular URL. `cloudflared` is installed; run
-   `cloudflared login`, `cloudflared tunnel create pinch`, then follow `infra/cloudflared/README.md`. Until
-   then the browser simulator works over `ws://localhost` on your LAN.
-5. **(Optional) APNs key** — to enable the "long task finished, come look" push. Stubbed and documented in
+1. **Auth + projects.** Run `./setup.sh` (generates `PINCH_TOKEN`, creates
+   `Secrets.swift`), then set `PINCH_PROJECT_ROOTS` in `backend/.env`. Subscription
+   auth is the default and needs no key — just be logged in via the `claude` CLI.
+2. **A reserved ngrok domain.** `ngrok config add-authtoken …`, reserve a free
+   static domain, set `PINCH_NGROK_DOMAIN`.
+3. **Xcode + your Apple Team.** Change `DEVELOPMENT_TEAM` and the bundle id in
+   `watch/project.yml`, then `xcodegen generate && open Pinch.xcodeproj` and Run on
+   your watch. Details: `watch/README.md`.
+4. **(One-time, on the watch) Action button → dictation.** Shortcuts app → the
+   "Speak a message in Pinch" shortcut → Settings → Action Button → First Press.
+5. **(Optional) APNs key** to make the "long task finished" push live. Stubbed in
    `watch/Sources/PushRegistration.swift`.
 
-Full from-zero walkthrough: **`docs/SETUP.md`**.
+Full walkthrough: **`docs/SETUP.md`**.
 
 ---
 
 ## Control map (Apple Watch Ultra)
+
 | Control | Action |
 |---|---|
-| **Double-tap (pinch)** | **Send message** — `.handGestureShortcut(.primaryAction)`, Ultra 2+/watchOS 11 |
-| **Action button** (orange) | **Start dictating** (system dictation; one-time Shortcut assignment) |
-| Tap mic button | Start dictating (same system dictation) |
-| **Digital Crown** | Scroll transcript · move text cursor in the editor · highlight menu options |
-| **Crown — rotate to confirm** | Permission gate: turn right past threshold = allow, left = deny (springs back) |
-| **Crown — pause to commit** | Mode / project menus: turn to highlight, dwell to select |
+| **Double-tap (pinch)** | **Send message** (`.handGestureShortcut(.primaryAction)`, Series 9 / Ultra 2+); on-screen Send is the fallback |
+| **Action button** / mic | Start dictation (Apple system dictation) |
+| **Digital Crown** | Scroll transcript · move the text cursor · highlight menu options |
+| **Crown — rotate to confirm** | Permission gate: right = allow, left = deny (springs back) |
+| **Crown — pause to commit** | Mode / project menus: rotate to highlight, dwell to select |
 | Swipe ← in editor | Delete the previous word |
 | **Wrist shake** | **Cancel** the in-flight turn |
-| Tap ✓ / ✗ · tap a row | Shortcuts that mirror the crown decision/selection |
+| Tap ✓ / ✗ · tap a row | Mirror the crown decision/selection |
 
-## Honest caveats (all verified, all documented)
-- **Double-tap is Series 9 / Ultra 2 and later only.** On an original Ultra the on-screen Send button is
-  the path (the app feature-detects and degrades).
-- **No crown PRESS for apps.** watchOS reserves the crown click for the system, so "select/confirm" is
-  built from crown *rotation* (threshold + dwell), never a press. Taps are the fallback.
-- **No always-on in-app voice listener.** `SFSpeechRecognizer` doesn't function on watchOS — voice in is
-  Apple's system dictation (tap mic / press Action button → speak → text). Fully hands-free always-listening
-  would require streaming the mic to the backend for server-side STT (not built; offered as a follow-up).
-- **Watch TTS can be silent without AirPods/Bluetooth.** Every spoken reply is paired with a haptic, and
-  there's a speaker toggle. Wear AirPods to reliably *hear* replies.
-- **No background WebSocket on watchOS.** The socket lives while the app is foreground; it reconnects and
-  resumes the session on reopen, and APNs is the re-engagement path for long tasks.
-- **Agent SDK is v0.3.x (pre-1.0).** Its surface can still move; the version is pinned. `zod` is on v4 to
-  satisfy the SDK's peer dependency.
-- **This is remote code execution as a service.** The bearer token is the only thing between the public
-  internet and an agent that can run `bash` in your repos. Treat the token like an SSH key; revoke it if a
-  device is lost. Optionally put Cloudflare Access in front. See `infra/SECURITY.md`.
+## Honest caveats (watchOS realities)
+
+- **Double-tap is Series 9 / Ultra 2+ only.** Elsewhere the on-screen Send button
+  is the path; the app feature-detects and degrades.
+- **No crown press for apps** — confirm/select is built from crown rotation.
+- **Voice is Apple system dictation**, not an always-on listener
+  (`SFSpeechRecognizer` doesn't function on watchOS).
+- **TTS can be silent without AirPods** — every spoken reply also fires a haptic.
+- **No background connection** — foreground only; reconnect + resume on reopen.
+  APNs is the re-engagement path and is stubbed.
+- **Agent SDK is pre-1.0** — its surface can move; the version is pinned.
+- **This is remote code execution as a service.** The bearer token is the only
+  lock. Treat it like an SSH key. See `infra/SECURITY.md`.
 
 ## Cost shape
-- Mac + Cloudflare Tunnel = **$0** infra (you already pay for the watch's cellular plan and your Anthropic
-  usage). Always-on cloud mode (Fly.io) is ~$2–20/mo and only sees pushed code.
+
+Mac + ngrok = **$0** infra (you pay for the watch's cellular plan and your
+Anthropic usage, or nothing extra on a Claude subscription). Always-on cloud mode
+(Fly.io) is ~$2–20/mo and only sees pushed code.
 
 ## Repo map
-`backend/` server · `watch/` watchOS app · `simulator/` browser test client · `packages/protocol/` wire
-contract · `infra/` deploy · `docs/` PLAN, DECISIONS, SETUP, STATUS · `scripts/smoke-test.mjs` verifier.
+
+`backend/` server · `watch/` watchOS app · `simulator/` browser test client ·
+`packages/protocol/` wire contract · `infra/` deploy · `docs/` PLAN, DECISIONS,
+SETUP, STATUS · `scripts/smoke-test.mjs` verifier.

@@ -1,9 +1,11 @@
 # Pinch — watchOS app
 
-The wrist remote for Claude Code. A single-target watchOS 11 SwiftUI app that talks the
-Pinch wire protocol (`packages/protocol/PROTOCOL.md`) to the backend over a WebSocket:
-voice in, response read aloud, approve/decline edits by tap, full autonomy incl. a
-"dangerously skip permissions" mode, over cellular.
+The wrist remote for Claude Code. A single-target watchOS 11 SwiftUI app that speaks the
+Pinch wire protocol (`packages/protocol/PROTOCOL.md`) to the backend over **HTTP**
+(request/response + a ~1.2s poll loop — watchOS refuses `URLSessionWebSocketTask` on the
+watch's network path, so the client class is named `WSClient` but is HTTP): voice in,
+response read aloud, approve/decline edits by tap, full autonomy incl. a "dangerously skip
+permissions" mode, over cellular.
 
 This directory has no build artifacts checked in — the Xcode project is **generated** from
 `project.yml` with [XcodeGen](https://github.com/yonik/XcodeGen). There is no npm here.
@@ -24,19 +26,28 @@ xcodegen generate          # reads project.yml → writes Pinch.xcodeproj
 open Pinch.xcodeproj
 ```
 
-## What you MUST do in Xcode (needs your Apple Developer account)
+## What you MUST do before generating (needs your Apple Developer account)
 
-1. Select the **Pinch** target → **Signing & Capabilities**.
-2. Set your **Team** (this is the part only you can do — it's tied to your developer account).
-3. Change the **bundle identifier** from the placeholder `com.josh.pinch.watch` to one you own
-   (also update `bundleIdPrefix` / `PRODUCT_BUNDLE_IDENTIFIER` in `project.yml` if you re-generate).
-4. Confirm the **Push Notifications** capability is present (it's declared in `Pinch.entitlements`).
-5. Pick your watch as the run destination and **Run**.
+`project.yml` bakes in the original author's Apple Team and bundle id, so set yours
+**before** `xcodegen generate` — otherwise signing fails (you can't sign with someone
+else's Team). Edit `project.yml`:
 
-If you change `project.yml`, re-run `xcodegen generate`. Your signing/team settings live in
-the generated project; XcodeGen won't clobber the Team you set unless you also remove it from
-the project — to be safe, set Team in Xcode after each regeneration, or add a
-`DEVELOPMENT_TEAM`/`xcconfig` to `project.yml`.
+```yaml
+options:
+  bundleIdPrefix: com.yourname.pinch          # a prefix you own
+targets:
+  Pinch:
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yourname.pinch.watch
+        DEVELOPMENT_TEAM: XXXXXXXXXX           # your Apple Team ID
+```
+
+Your Team ID is at [developer.apple.com](https://developer.apple.com/account) → Membership,
+or in Xcode → Settings → Accounts. Then `xcodegen generate && open Pinch.xcodeproj`. Because
+the Team lives in `project.yml`, it survives every regeneration — no need to re-set it in
+Xcode. The **Push Notifications** capability is declared in `Pinch.entitlements` (already
+wired). Pick your watch as the run destination and **Run**.
 
 ## Pair it
 
@@ -92,10 +103,12 @@ Shortcut path.
   play through the built-in speaker when no Bluetooth audio route is connected. That's why
   every spoken reply also fires a haptic — you still get feedback. Connect AirPods to actually
   *hear* responses, or rely on reading + haptics.
-- **No background WebSocket.** watchOS reclaims the socket when the app suspends. Pinch keeps
-  the connection only in the foreground, reconnects with exponential backoff + jitter on
-  return, and **resumes** the agent session via `resumeSessionId` so an in-flight turn isn't
-  lost. It pings every ~25 s to stay under Cloudflare's 100 s idle cutoff.
+- **No background networking.** watchOS suspends the app's network work in the background.
+  Pinch talks to the backend only in the foreground, reconnects on return, and **resumes**
+  the agent session via `resumeSessionId` so an in-flight turn isn't lost. Prompts you send
+  go into a **durable outbox** — removed only on a confirmed 2xx and retried otherwise — so a
+  message sent during an LTE handoff is delivered on reconnect rather than dropped. (The
+  backend dedups by `promptId` so a retry can't double-run a turn.)
 - **APNs re-engagement is a STUB.** `PushRegistration.swift` registers for notifications and
   uploads the device token to `POST <server>/register-push`, and a tapped alert reconnects.
   To make it live you need an **APNs Auth Key (.p8)** on your developer account and the
@@ -119,7 +132,7 @@ Sources/
   PinchApp.swift                @main App + WKApplicationDelegate; consumes Action-button dictation
   Store.swift                   PinchStore — state, transcript, draft, intents; owns subsystems
   Protocol.swift                Codable mirror of the v1 wire protocol
-  WSClient.swift                URLSessionWebSocketTask: auth, receive loop, heartbeat, reconnect+resume
+  WSClient.swift                HTTP transport (named WSClient for history): bearer auth, ~1.2s poll, durable prompt outbox, reconnect+resume
   Dictation.swift               Apple system dictation presented programmatically (the real voice path)
   DictationIntent.swift         StartDictationIntent + DictationRouter + AppShortcut (Action button)
   CrownControls.swift           CrownConfirm (rotate-to-confirm) + CrownPicker (rotate+dwell select)

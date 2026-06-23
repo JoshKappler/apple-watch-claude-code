@@ -69,6 +69,18 @@ otherwise reset to 0.** Keep this branch in `openSession()`.
   resume, `reviveSession()` rebuilds the session with `options.resume = sdkId` so
   the SDK reloads the transcript and Claude keeps context.
 
+## Watch-aware agent output
+
+Every real session appends `WATCH_SYSTEM_APPEND` (`backend/src/session.ts`) to the
+Claude Code preset system prompt (`systemPrompt: { type: "preset", preset:
+"claude_code", append: … }`). It tells the agent it's talking to someone on an
+Apple Watch — replies are read aloud (TTS) and shown on a tiny screen — so it must
+write plain text (no Markdown/emoji/tables/code fences — they don't render and get
+read aloud literally), keep replies brief, and offer choices as short numbered
+prose. It shapes COMMUNICATION only; tools/edits/rigor are unchanged. It's a static
+string (prompt-cached with the preset). The mock session doesn't use it. If you
+change how the watch renders/speaks replies, keep this append in sync.
+
 ## Build & verify
 
 - **Whole TS workspace:** `npm run typecheck` (and `npm run build`) at the root.

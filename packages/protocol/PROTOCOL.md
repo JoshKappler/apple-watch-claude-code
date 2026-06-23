@@ -5,7 +5,13 @@ Every message is an object with a `type` discriminator. This file is the source 
 both the TypeScript backend and the Swift watch client implement. The canonical machine-
 readable schema lives in `src/index.ts` (Zod). Swift mirrors these shapes as `Codable` structs.
 
-- **Transport:** WSS (TLS). Path `/ws`. Subprotocol: none.
+- **Transport:** WSS (TLS), path `/ws` — used by the browser simulator. The
+  physical **watch uses HTTP** instead (`/api/*` + a poll loop), because watchOS
+  refuses `URLSessionWebSocketTask` on the watch's network path. The HTTP API
+  (`backend/src/httpApi.ts`) carries the **same `ServerMsg`/`ClientMsg` shapes
+  defined below**: client messages map to `POST /api/{prompt,decision,mode,…}`,
+  and server messages are drained from a per-session indexed event log via
+  `GET /api/poll`. The message contracts in this file are authoritative for both.
 - **Auth:** the **first** client frame MUST be `auth`. The server replies `ready` on success or
   closes with code `4401` on failure. No other frame is processed before `auth`.
 - **Versioning:** `PROTOCOL_VERSION = 1`. Server includes it in `ready`; client sends it in `auth`.

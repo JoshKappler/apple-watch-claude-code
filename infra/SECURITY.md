@@ -8,10 +8,11 @@ password it effectively is.
 
 ## Threat model
 
-- The transport is public (cellular → Cloudflare/Fly → your origin). Assume the
-  URL will be discovered.
+- The transport is public (cellular → ngrok/Cloudflare/Fly → your origin). Assume
+  the URL will be discovered.
 - The only thing standing between the internet and a shell is the **token check
-  on the handshake** (plus any optional Cloudflare Access layer).
+  on every request** (the WS handshake and every `/api/*` call), plus any optional
+  edge-access layer.
 - A leaked token = full compromise of whatever the backend can reach.
 
 ## Layered auth (defense in depth)
@@ -21,15 +22,17 @@ password it effectively is.
    `ws://`. No plaintext on the wire.
 2. **Device token (`PINCH_TOKEN`).** 32 random bytes, base64url
    (`crypto.randomBytes(32).toString('base64url')`). Generate with
-   `infra/scripts/gen-token.mjs`. Sent in the **`Authorization: Bearer` header
-   or the first frame — never the query string** (query strings leak into
-   proxy/edge logs, browser history, and Referer headers). The backend validates
-   it **constant-time** on the handshake and drops the socket on mismatch before
-   any agent work begins.
-3. **Path allowlist.** The server only accepts the `/ws` path; everything else
-   is rejected (and the Cloudflare ingress 404s non-matching hosts/paths before
-   they reach Node). The agent is also constrained to `PINCH_PROJECTS` repo
-   roots — paths outside the allowlist are refused.
+   `infra/scripts/gen-token.mjs`. Sent in the **`Authorization: Bearer` header —
+   never the query string** (query strings leak into proxy/edge logs, browser
+   history, and Referer headers); the browser simulator, which can't set WS
+   headers, sends it in the first `auth` frame instead. The backend validates it
+   **constant-time** on the WS handshake and on every `/api/*` request, and
+   rejects mismatches before any agent work begins.
+3. **Path allowlist.** The server accepts only `/ws`, `/api/*`, and `/health`;
+   everything else is rejected, and a bad/missing bearer on `/api/*` returns 401
+   without revealing routes. The agent is also constrained to the
+   `PINCH_PROJECT_ROOTS` scan dirs and `PINCH_PROJECTS` allowlist — paths outside
+   every configured root are refused.
 4. **Optional Cloudflare Access (service token / mTLS).** Put an Access policy in
    front of `agent.<yourdomain>` so unauthenticated requests never reach Node at
    all. The watch/sim then also send `CF-Access-Client-Id` /
@@ -61,9 +64,10 @@ Rotate:
 # 1. New token.
 NEW=$(node infra/scripts/gen-token.mjs --raw)
 
-# 2a. Mac: update backend/.env, then restart the server.
+# 2a. Mac: update backend/.env, then restart the server so it loads the new token.
 #     (edit PINCH_TOKEN=$NEW in backend/.env)
-launchctl kickstart -k "gui/$(id -u)/com.pinch.server"
+#     launchd install:   launchctl kickstart -k "gui/$(id -u)/com.pinch.server"
+#     nohup launcher:    pkill -f 'dist/index.js' && infra/start-pinch.command
 
 # 2b. Cloud: 
 fly secrets set PINCH_TOKEN="$NEW"     # triggers a redeploy/restart
@@ -81,15 +85,22 @@ access immediately** — fastest first:
 
 **Mac mode**
 
+If you launched via `infra/start-pinch.command` (nohup, the default), kill the
+processes directly — fastest first:
+
 ```bash
 # Kill the tunnel: the public URL goes dark instantly.
-launchctl bootout "gui/$(id -u)/com.pinch.tunnel"
+pkill -f 'ngrok http'                 # ngrok
+# or, on the Cloudflare path:
+launchctl bootout "gui/$(id -u)/com.pinch.tunnel"   # if installed under launchd
 
-# And/or stop the backend.
-launchctl bootout "gui/$(id -u)/com.pinch.server"
+# And/or stop the backend (drops all live sessions).
+pkill -f 'dist/index.js'              # nohup launcher
+launchctl bootout "gui/$(id -u)/com.pinch.server"   # if installed under launchd
 
-# Nuclear: take the hostname offline at Cloudflare.
-cloudflared tunnel route dns --overwrite-dns pinch  # or delete the DNS record / disable the tunnel
+# Nuclear: disable the domain at the edge.
+#   ngrok:      delete the reserved domain in the ngrok dashboard
+#   Cloudflare: delete the DNS record / disable the tunnel
 ```
 
 **Cloud mode**

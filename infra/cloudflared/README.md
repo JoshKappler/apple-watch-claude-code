@@ -1,12 +1,14 @@
-# Cloudflare Tunnel (default, recommended)
+# Cloudflare Tunnel (if you own a domain)
 
-A **named** Cloudflare Tunnel gives Pinch a stable public `wss://` hostname with
-TLS terminated at Cloudflare's edge. WebSockets work on **all plans** (including
-free), so the watch can reach your Mac over cellular. This is the recommended
-path: free, your own hostname, no inbound ports opened on your Mac.
+A **named** Cloudflare Tunnel gives Pinch a stable public hostname on **your own
+domain**, with TLS terminated at Cloudflare's edge. Free, your own hostname, no
+inbound ports opened on your Mac. Use this if you already have a domain on
+Cloudflare; if you don't, the **ngrok free static domain** ([`../ngrok/`](../ngrok/))
+is the recommended no-domain default. `pinch-up.sh` auto-detects a `~/.cloudflared/
+config.yml` and prefers it when present.
 
 ```
-Watch ⇄ wss://agent.<yourdomain>/ws ⇄ Cloudflare edge ⇄ cloudflared ⇄ ws://localhost:8787/ws
+Watch (HTTP /api) / Simulator (/ws) ⇄ agent.<yourdomain> ⇄ Cloudflare edge ⇄ cloudflared ⇄ http://localhost:8787
 ```
 
 ## Prerequisites
@@ -61,18 +63,16 @@ infra/start-tunnel.sh
 To keep it running across reboots/crashes, use the launchd agent instead — see
 `infra/launchd/`.
 
-## The `wss://` URL for the watch / simulator
+## The URL for the watch / simulator
 
-Your public WebSocket endpoint is:
+Your public host is `agent.<yourdomain>`. Enter it with the `PINCH_TOKEN` bearer:
 
-```
-wss://agent.<yourdomain>/ws
-```
+- **Watch** (`Secrets.swift` / Settings): `wss://agent.<yourdomain>` — the app
+  normalizes it and uses the HTTP `/api/*` paths under the hood.
+- **Simulator** (connection field): `wss://agent.<yourdomain>/ws`.
 
-Put that in the watch app's settings (server URL) and/or the simulator's
-connection field, along with the `PINCH_TOKEN` bearer. The token goes in the
-`Authorization: Bearer <token>` header or the first frame — **never** in the
-query string.
+The token goes in the `Authorization: Bearer <token>` header (or the simulator's
+first `auth` frame) — **never** in the query string.
 
 ## Idle-timeout gotcha (100s)
 

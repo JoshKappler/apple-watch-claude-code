@@ -1,16 +1,23 @@
 # Pinch setup — from zero to talking to your repo from your watch
 
-This stitches the backend + a public tunnel + the watch/simulator into one
-working flow. By the end you'll send a message from a client over a public
-`wss://` URL and watch a Claude agent edit your repo.
+This is the long-form walkthrough. The top-level [`README.md`](../README.md) is the
+fast path; this doc adds detail, alternatives, and troubleshooting. By the end
+you'll send a voice message from your watch over a public URL and watch a Claude
+agent edit your repo.
 
-Pick **one** transport. The recommended path is **Mac + Cloudflare Tunnel**
-(free, stable hostname, agent sees your real local repos). Alternatives: ngrok
-(quick, fallback) or Fly.io cloud (always-on, no Mac, but only sees pushed code).
+The recommended transport is a **stable ngrok free static domain** — free, no
+domain of your own required, and the URL never changes (so the build baked into
+the watch keeps working across restarts). Alternatives (a named Cloudflare
+Tunnel, Fly.io cloud) are at the bottom.
 
 ```
-Watch / Simulator  ⇄  wss://agent.<yourdomain>/ws  ⇄  Cloudflare edge  ⇄  cloudflared  ⇄  backend :8787  ⇄  your repos
+Apple Watch  ⇄  HTTPS + ~1.2s poll  ⇄  ngrok edge  ⇄  ngrok agent  ⇄  backend :8787  ⇄  your repos
 ```
+
+> The watch talks to the backend over **HTTP** (`/api/*`), not WebSockets —
+> watchOS refuses `URLSessionWebSocketTask` on the watch's network path. The
+> browser **simulator** uses the WebSocket (`/ws`) path. Same sessions, two
+> transports.
 
 > Read **[`../infra/SECURITY.md`](../infra/SECURITY.md)** first. This exposes a
 > coding agent that can run Bash and edit files. The token is the only lock.
@@ -21,16 +28,17 @@ Watch / Simulator  ⇄  wss://agent.<yourdomain>/ws  ⇄  Cloudflare edge  ⇄  
 
 | Secret | Where it goes | What it is |
 |---|---|---|
-| `PINCH_TOKEN` | `backend/.env` **and** the watch/sim | Device bearer token. Generate it; same value on both ends. |
-| `ANTHROPIC_API_KEY` | `backend/.env` | Anthropic key for the Agent SDK. Not needed if `PINCH_MOCK=1`. |
-| `PINCH_PROJECTS` | `backend/.env` | Comma-separated **absolute** repo paths the agent may edit (allowlist). |
-| `GITHUB_TOKEN` | Fly secrets (cloud mode only) | Clones/pushes repos in the cloud. |
+| `PINCH_TOKEN` | `backend/.env` **and** the watch (`Secrets.swift`) | Device bearer token. Generated for you by `setup.sh`; same value on both ends. |
+| `PINCH_AUTH` | `backend/.env` | `subscription` (default — uses your Mac's Claude Code login, no key) or `apikey`. |
+| `ANTHROPIC_API_KEY` | `backend/.env` | Only when `PINCH_AUTH=apikey`. Not needed in subscription or mock mode. |
+| `PINCH_PROJECT_ROOTS` | `backend/.env` | Parent dir(s) to scan — every child repo becomes a selectable project. |
+| `PINCH_NGROK_DOMAIN` | `backend/.env` | Your reserved ngrok free static domain (read by the launchers). |
 
 ---
 
-## Order of operations (Mac + Cloudflare Tunnel)
+## Order of operations (Mac + ngrok)
 
-### 0. Bootstrap (optional but easy)
+### 0. Bootstrap
 
 From the repo root:
 
@@ -38,139 +46,159 @@ From the repo root:
 ./setup.sh
 ```
 
-It checks `node`/`cloudflared`, creates `backend/.env` from the example (without
-overwriting an existing one), and generates a `PINCH_TOKEN`. Then continue at
-step 2 (fill in the remaining `.env` values). To do it by hand, start at step 1.
+It checks `node`, creates `backend/.env` from the example (without overwriting an
+existing one), generates a `PINCH_TOKEN`, and creates
+`watch/Sources/Secrets.swift` (gitignored) with the token filled in. Then edit
+`backend/.env` to fill in the rest.
 
-### 1. Backend env + token
-
-```bash
-cd backend
-cp .env.example .env          # skip if setup.sh already did it
-# Generate a device token and drop it in:
-node ../infra/scripts/gen-token.mjs        # prints the token + a paste-in line
-```
+### 1. Backend env
 
 Edit `backend/.env`:
 
 ```ini
-ANTHROPIC_API_KEY=sk-ant-...                 # or leave blank and set PINCH_MOCK=1
-PINCH_TOKEN=<the token you just generated>
+# subscription = use the Mac's Claude Code login (Claude Max/Pro). No key. Default.
+# apikey       = use ANTHROPIC_API_KEY instead.
+PINCH_AUTH=subscription
+ANTHROPIC_API_KEY=
+
+PINCH_TOKEN=<filled in by setup.sh>
+
+# Point this at a PARENT folder. Every child repo shows up on the watch,
+# recency-sorted, recomputed each time you open the picker (clone a repo and it
+# just appears — no restart). The agent cds into whichever you pick.
+PINCH_PROJECT_ROOTS=/Users/you/Desktop/projects
+# Optional: explicit absolute repo paths to also allow.
+PINCH_PROJECTS=
+
 PORT=8787
-PINCH_PROJECTS=/Users/josh/desktop/apple watch   # absolute path(s), comma-separated
-PINCH_MOCK=0
 PINCH_MODEL=claude-opus-4-8
-LOG_LEVEL=info
+
+# Your reserved ngrok free static domain (step 3).
+PINCH_NGROK_DOMAIN=your-name-here.ngrok-free.dev
 ```
 
-> `PINCH_PROJECTS` is the agent's allowlist — it can only touch repos under
-> these absolute roots. Paths may contain spaces; no quotes needed in `.env`.
+> If `PINCH_AUTH=subscription`, run `claude` once in a terminal and finish the
+> login. The backend reuses that keychain session — no API key. The config layer
+> scrubs any stray/empty `ANTHROPIC_API_KEY` so it can't override the login.
 
-### 2. Install and run the backend
+> `PINCH_PROJECT_ROOTS` / `PINCH_PROJECTS` is the agent's allowlist — it can only
+> touch repos under these roots. Paths may contain spaces; no quotes in `.env`.
 
-From the repo root:
+### 2. Install and smoke-test without a watch
 
 ```bash
 npm install
-npm run dev            # tsx watch — backend on ws://localhost:8787/ws
+
+# terminal 1 — backend in mock mode (scripted agent, no SDK, no key)
+PINCH_MOCK=1 PINCH_TOKEN=dev-token npm run dev
+
+# terminal 2 — the browser "watch"
+npm run sim
 ```
 
-Leave it running. (For production/always-on, `npm run build --workspace backend`
-then use the launchd agent in step 5.)
+In the simulator, connect to `ws://localhost:8787/ws` with token `dev-token`,
+send a prompt, and watch the scripted turn stream in — including the permission
+card you approve with a click. When that works, drop `PINCH_MOCK`, set
+`PINCH_PROJECT_ROOTS`, and you have a real agent on your repos locally.
 
-### 3. Smoke-test locally with the simulator
+> The simulator uses the WebSocket path; the watch uses HTTP. Both exercise the
+> same backend session logic, so a green simulator means the brain works.
 
-In a second terminal, from the repo root:
+### 3. Reserve a stable ngrok domain (one-time)
 
 ```bash
-npm run sim            # Vite dev server, opens the browser "watch" (default :5173)
+brew install ngrok
+ngrok config add-authtoken <token-from-the-ngrok-dashboard>
 ```
 
-In the simulator's connection settings, point it at the **local** server first
-to confirm the backend works before going public:
+In the ngrok dashboard: **Domains → New Domain** → reserve a free static domain
+(e.g. `your-name-here.ngrok-free.dev`). Put it in `backend/.env` as
+`PINCH_NGROK_DOMAIN`. It's free, permanent, and yours. ngrok free allows one
+agent session at a time, which is all you need.
 
-```
-URL:   ws://localhost:8787/ws
-Token: <PINCH_TOKEN>
-```
-
-Send a message; you should see the agent respond and (if not in mock mode) start
-using tools. If this works, the transport is the only thing left.
-
-### 4. Create the Cloudflare Tunnel (one-time)
-
-Requires a domain on your Cloudflare account and `cloudflared`
-(`brew install cloudflared`).
+### 4. Build the backend and bring the tether up
 
 ```bash
-cloudflared tunnel login                          # browser auth
-cloudflared tunnel create pinch                   # prints TUNNEL-UUID, writes ~/.cloudflared/<UUID>.json
-cloudflared tunnel route dns pinch agent.<yourdomain>
+npm run build                 # the launcher runs from dist/
+infra/start-pinch.command     # or double-click it in Finder
 ```
 
-Install the ingress config:
+`start-pinch.command` is idempotent and detached: it reuses a healthy backend on
+`:8787` and a live ngrok tunnel on your static domain, starts only what's
+missing, runs everything under `nohup` (close the window and walk away — it
+serves while the Mac is logged in and awake), and prints the URL + token.
+
+For a foreground "build + run + tunnel" one-shot that tears everything down on
+Ctrl-C, use `pinch-up.sh` instead (it auto-detects a Cloudflare config → ngrok →
+LAN-only).
+
+### 5. The watch app
+
+The Xcode project is generated from `watch/project.yml` (it's gitignored, not
+committed). The committed `project.yml` has the original author's Apple Team baked
+in, so **change it to yours before generating** or signing fails.
+
+```yaml
+# watch/project.yml
+options:
+  bundleIdPrefix: com.yourname.pinch        # a prefix you own
+targets:
+  Pinch:
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yourname.pinch.watch
+        DEVELOPMENT_TEAM: XXXXXXXXXX         # your Apple Team ID
+```
+
+Then:
 
 ```bash
-cp "infra/cloudflared/config.example.yml" ~/.cloudflared/config.yml
-# Edit ~/.cloudflared/config.yml:
-#   tunnel:           <TUNNEL-UUID>
-#   credentials-file: /Users/josh/.cloudflared/<TUNNEL-UUID>.json
-#   ingress hostname: agent.<yourdomain>
+cd watch
+xcodegen generate            # reads project.yml → writes Pinch.xcodeproj
+open Pinch.xcodeproj
 ```
 
-Details + how to find the UUID later: `infra/cloudflared/README.md`.
+Set `watch/Sources/Secrets.swift` (created by `setup.sh`, gitignored — never
+commit it):
 
-### 5. Run the tunnel
-
-Foreground (quick test):
-
-```bash
-infra/start-tunnel.sh
+```swift
+enum Secrets {
+    static let serverURL = "wss://your-name-here.ngrok-free.dev"  // your ngrok domain
+    static let token = "<your PINCH_TOKEN>"                       // already filled in
+}
 ```
 
-Always-on (survives logout/crash/reboot) — install the launchd agents:
+Enter the `wss://` URL — the app normalizes it and uses HTTPS for the HTTP
+transport under the hood. This is the build-time default; you can also type/override
+it in the watch's Settings screen, and that override persists.
 
-```bash
-# Builds first if you haven't: npm run build --workspace backend
-infra/launchd/install-launchd.sh
-# Status:  launchctl print gui/$(id -u)/com.pinch.server | head
-# Logs:    ~/Library/Logs/pinch/{server,tunnel}.{out,err}.log
-# Remove:  infra/launchd/uninstall-launchd.sh
-```
+Pick your watch as the run destination and **Run**. The first on-device install
+needs you to trust your developer certificate (Watch app → General → VPN & Device
+Management). Details and the control map: [`../watch/README.md`](../watch/README.md).
 
-The launchd server agent runs `node dist/index.js` from `backend/`, so build the
-backend before relying on it.
+### 6. Use it over cellular
 
-### 6. Connect a client over cellular
+Open the app, take your phone out of range (or turn Wi-Fi off to prove cellular),
+and send a message with the double-tap pinch. You're driving an agent on your Mac
+from your wrist. Because the ngrok domain is stable, you only ever re-enter the
+URL if you reset the watch's settings.
 
-Your public endpoint is:
-
-```
-wss://agent.<yourdomain>/ws
-```
-
-- **Simulator:** put that URL + the `PINCH_TOKEN` in the connection settings.
-- **Watch app:** enter the same URL and token in its settings screen. With the
-  watch on cellular (Wi-Fi off, away from your Mac's network), send a message
-  with the double-tap pinch — you're now driving the agent on your Mac from your
-  wrist.
-
-The token goes in the `Authorization: Bearer` header or the first frame, never
-the query string.
-
-> **100s idle note:** Cloudflare drops idle WebSockets after ~100s. The app
-> sends a 25s heartbeat on both ends, so live sessions stay up. Nothing to do.
+The token goes in the `Authorization: Bearer` header on every request, never the
+query string.
 
 ---
 
 ## Alternative transports
 
-- **ngrok (fallback):** `infra/ngrok/README.md`. `ngrok http 8787` for a quick
-  random URL, or a reserved domain (~$8/mo) for a stable one. Same `PINCH_TOKEN`.
+- **Named Cloudflare Tunnel (own domain, stable):** if you have a domain on
+  Cloudflare, `cloudflared tunnel login/create/route`, then
+  `cp infra/cloudflared/config.example.yml ~/.cloudflared/config.yml` and fill in
+  the UUID + hostname. `pinch-up.sh` auto-detects the config and uses it. Full
+  steps: `infra/cloudflared/README.md`.
 - **Fly.io cloud (always-on, no Mac):** `infra/cloud/README.md`. Clones your
-  GitHub repos at boot; the agent only sees **pushed** code, and pushes its work
-  back as a branch/PR. Set `ANTHROPIC_API_KEY`, `PINCH_TOKEN`, `GITHUB_TOKEN`,
-  and `REPOS` via `fly secrets`. Not Vercel — serverless can't hold a WebSocket.
+  GitHub repos at boot; the agent only sees **pushed** code and pushes its work
+  back as a branch. It is *not* remote control of your Mac. Not Vercel —
+  serverless can't hold a long-lived agent session.
 
 ---
 
@@ -178,10 +206,13 @@ the query string.
 
 | Symptom | Likely cause |
 |---|---|
-| Client connects locally but not via tunnel | tunnel not running, wrong hostname in config, or DNS route not created |
-| Connection drops after ~100s | heartbeat disabled; Cloudflare closed the idle socket |
-| Auth rejected | token mismatch between `backend/.env` and the client, or sent in the query string |
-| Agent "can't find/edit" a repo | path not in `PINCH_PROJECTS`, or not an absolute path |
-| launchd agent won't stay up | `dist/index.js` not built, or wrong `NODE_BIN`; check `~/Library/Logs/pinch/server.err.log` |
+| Watch can't connect, simulator works locally | tunnel not running, or `PINCH_NGROK_DOMAIN` ≠ `serverURL` in `Secrets.swift` |
+| `unauthorized` on the watch | token in `Secrets.swift` ≠ `PINCH_TOKEN` in `backend/.env`, or you rotated the token and didn't restart the backend |
+| Backend won't start | not built (`npm run build`), or `PINCH_PROJECT_ROOTS`/`PINCH_PROJECTS` unset in real mode |
+| Agent "can't find/edit" a repo | path not under a configured root, or not absolute |
+| ngrok won't come up | not authed (`ngrok config add-authtoken …`), or the free single-session limit — kill the stale `ngrok` process |
+| Xcode signing fails | `DEVELOPMENT_TEAM` / bundle id in `project.yml` still point at the original author |
+| Changes don't take effect | rebuilding `dist/` isn't enough — **restart the backend**; watch changes need a fresh Xcode build + install |
 
-Rotation and the incident kill-switch: **[`../infra/SECURITY.md`](../infra/SECURITY.md)**.
+Health check from the Mac: `curl localhost:8787/health`. Rotation and the
+incident kill-switch: **[`../infra/SECURITY.md`](../infra/SECURITY.md)**.
