@@ -35,8 +35,17 @@ import { createMockSession } from "./mockSession.js";
 import { createClaudeSession } from "./session.js";
 import { getSessionRecord, saveSessionRecord } from "./sessionStore.js";
 
-/** Max buffered events retained per session (ring buffer / replay window). */
-export const EVENT_BUFFER_LIMIT = 500;
+/**
+ * Max buffered events retained per session (ring buffer / replay window).
+ *
+ * Frames now arrive COALESCED (session.ts batches streaming deltas), so a normal turn produces
+ * tens of entries, not thousands — 500 was where a thinking-heavy turn used to trim its own
+ * opening frames (the `status("thinking")` + first `thinking_delta` that drive the watch's
+ * indicator), producing "connected but no thought process". 2000 gives generous headroom for a
+ * long tool+thinking turn while a slow watch poll catches up. Any residual overflow is still
+ * surfaced (not silent) via the poll-gap flag in readEvents.
+ */
+export const EVENT_BUFFER_LIMIT = 2000;
 
 /**
  * How long a detached (no live socket AND no recent poll) session is kept alive

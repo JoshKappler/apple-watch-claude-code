@@ -39,6 +39,20 @@ type PermissionResult =
   | { behavior: "deny"; message: string; interrupt?: boolean };
 
 /**
+ * Coalesce streaming SSE deltas into ~this many chars per emitted frame.
+ *
+ * Each frame the SDK streams becomes ONE entry in the session's bounded event-log ring
+ * (sessionRegistry: EVENT_BUFFER_LIMIT). Unbatched, a single extended-thinking turn emits
+ * hundreds–thousands of token-sized `thinking_delta` frames; they overflow the ring and trim the
+ * turn's OWN earliest frames — the `status("thinking")` and first `thinking_delta` that drive the
+ * watch's "thinking" indicator — before the watch ever polls them. The result is the
+ * "connected but no thought process" symptom. Batching collapses a whole turn to well under the
+ * ring size while still streaming progressively (one frame per ~sentence). Pairs with the
+ * poll-gap signal in sessionRegistry.readEvents as belt-and-suspenders.
+ */
+const DELTA_FLUSH_CHARS = 256;
+
+/**
  * Async generator you can push into. Resolves the seeded prompt first, then any
  * follow-up turns. Ends only when `close()` is called.
  */
@@ -114,6 +128,9 @@ export class ClaudeSession implements AgentSession {
     | null = null;
   private started = false;
   private _sessionId: string | undefined;
+  /** Coalescing buffer for streaming deltas (see DELTA_FLUSH_CHARS). */
+  private deltaBuf = "";
+  private deltaKind: "thinking" | "text" | null = null;
   /**
    * Tool names the user chose "Always allow" for — auto-approved for the rest of this session
    * (granularity is per tool NAME: allowing one Edit allows all Edits until the session ends).
@@ -329,7 +346,12 @@ export class ClaudeSession implements AgentSession {
       for await (const raw of this.query) {
         this.handleMessage(raw as Record<string, unknown>);
       }
+      // Stream ended cleanly — emit any tail the last block didn't flush.
+      this.flushDeltas();
     } catch (err) {
+      // Flush buffered deltas before the terminal frames so partial thinking/text isn't lost
+      // behind a cancelled/error frame.
+      this.flushDeltas();
       if (this.abort.signal.aborted) {
         // Expected on cancel — surface a clean cancelled turn.
         this.deps.send(srv.turnComplete("cancelled"));
@@ -346,17 +368,21 @@ export class ClaudeSession implements AgentSession {
   private handleMessage(m: Record<string, unknown>): void {
     const type = m.type as string;
 
+    // Streaming deltas are coalesced (see handlePartial); everything else is a DISCRETE frame
+    // that must land after any buffered deltas, so flush before handling it. This keeps order
+    // exact: a turn's thinking/text always precedes its tool_use / assistant message / result.
+    if (type === "partial_assistant") {
+      this.handlePartial((m as { stream_event?: unknown }).stream_event);
+      return;
+    }
+    this.flushDeltas();
+
     if (type === "system" && (m as { subtype?: string }).subtype === "init") {
       const sid = (m as { session_id?: string }).session_id;
       if (sid) {
         this._sessionId = sid;
         this.deps.onSessionId?.(sid);
       }
-      return;
-    }
-
-    if (type === "partial_assistant") {
-      this.handlePartial((m as { stream_event?: unknown }).stream_event);
       return;
     }
 
@@ -376,16 +402,52 @@ export class ClaudeSession implements AgentSession {
     }
   }
 
-  /** Raw Anthropic SSE event → streaming deltas. */
+  /** Emit any buffered streaming text as ONE delta frame, preserving its kind and order. */
+  private flushDeltas(): void {
+    const text = this.deltaBuf;
+    const kind = this.deltaKind;
+    this.deltaBuf = "";
+    this.deltaKind = null;
+    if (!text || !kind) return;
+    this.deps.send(
+      kind === "thinking" ? srv.thinkingDelta(text) : srv.assistantDelta(text),
+    );
+  }
+
+  /**
+   * Raw Anthropic SSE event → streaming deltas, COALESCED. We accumulate same-kind delta text and
+   * emit it in ~DELTA_FLUSH_CHARS chunks (and at each content-block boundary) instead of one frame
+   * per token. See DELTA_FLUSH_CHARS for why: it keeps a thinking-heavy turn from overflowing the
+   * event-log ring and trimming its own opening frames.
+   */
   private handlePartial(event: unknown): void {
     if (!event || typeof event !== "object") return;
-    const ev = event as { type?: string; delta?: { type?: string; text?: string; thinking?: string } };
-    if (ev.type !== "content_block_delta" || !ev.delta) return;
-    if (ev.delta.type === "text_delta" && ev.delta.text) {
-      this.deps.send(srv.assistantDelta(ev.delta.text));
-    } else if (ev.delta.type === "thinking_delta" && ev.delta.thinking) {
-      this.deps.send(srv.thinkingDelta(ev.delta.thinking));
+    const ev = event as {
+      type?: string;
+      delta?: { type?: string; text?: string; thinking?: string };
+    };
+    // End of a content block → flush so the next block (or the assistant message) starts clean.
+    if (ev.type === "content_block_stop") {
+      this.flushDeltas();
+      return;
     }
+    if (ev.type !== "content_block_delta" || !ev.delta) return;
+    let kind: "thinking" | "text" | null = null;
+    let chunk = "";
+    if (ev.delta.type === "text_delta" && ev.delta.text) {
+      kind = "text";
+      chunk = ev.delta.text;
+    } else if (ev.delta.type === "thinking_delta" && ev.delta.thinking) {
+      kind = "thinking";
+      chunk = ev.delta.thinking;
+    } else {
+      return;
+    }
+    // A kind switch (e.g. thinking → text) flushes the prior buffer first so frames stay ordered.
+    if (this.deltaKind && this.deltaKind !== kind) this.flushDeltas();
+    this.deltaKind = kind;
+    this.deltaBuf += chunk;
+    if (this.deltaBuf.length >= DELTA_FLUSH_CHARS) this.flushDeltas();
   }
 
   /** Whole assistant message: text blocks (TTS) + tool_use blocks. */
