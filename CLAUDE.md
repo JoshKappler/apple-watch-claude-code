@@ -77,8 +77,9 @@ Claude Code preset system prompt (`systemPrompt: { type: "preset", preset:
 Apple Watch — replies are read aloud (TTS) and shown on a tiny screen — so it must
 write plain text (no Markdown/emoji/tables/code fences — they don't render and get
 read aloud literally), keep replies brief, and offer choices as short numbered
-prose. It shapes COMMUNICATION only; tools/edits/rigor are unchanged. It's a static
-string (prompt-cached with the preset). The mock session doesn't use it. If you
+prose. It shapes COMMUNICATION, plus one standing work rule — the origin-main git
+default (no worktrees / no branch switching); tools/edits/rigor are otherwise
+unchanged. It's a static string (prompt-cached with the preset). The mock session doesn't use it. If you
 change how the watch renders/speaks replies, keep this append in sync.
 
 ## Build & verify
@@ -199,6 +200,9 @@ ask in prose with numbered options instead (the watch can dictate "1", "option
 User preferences live in the global `~/.claude/CLAUDE.md`. In short: build from
 scratch over frameworks (no LangChain/n8n), get to working code fast, Zod at LLM
 boundaries, tool_use for structured output, prompt caching on stable system
-prompts. Commit and push without asking once typecheck/tests pass; ask before
+prompts. Git: one branch only — commit and push to `origin/main`; never create
+worktrees, `checkout`/`switch` or create branches, or change the primary branch (the
+watch can spawn several agents into one tree — they must not move it out from under
+each other). Commit and push without asking once typecheck/tests pass; ask before
 anything destructive. Skip trailing "what I changed" summaries — diffs are read
 directly.
