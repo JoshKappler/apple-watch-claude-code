@@ -157,25 +157,47 @@ struct ComposerView: View {
     /// Collapsed chrome (via a swipe-down over the transcript, or the empty draft box's down-arrow):
     /// EVERYTHING is hidden — the draft box, all three buttons, and (in RootView) the top
     /// folder/gear icons — so the transcript fills the WHOLE screen for reading. The only thing left
-    /// is a small orange UP chevron at the very bottom: tap it OR swipe up on the chat to bring the
+    /// is a small orange UP-chevron CIRCLE at the very bottom: tap it OR swipe up to bring the
     /// composer + top icons back. It always points UP — up means "reveal / expand", never down.
     private var collapsedBar: some View {
-        // A single SHORT, wide handle so the chat feed keeps almost the entire screen. Tap it OR
-        // swipe up anywhere on the chat to restore (the swipe is reliable now the transcript is
-        // scrollDisabled). The up chevron means "bring the controls back up".
-        Button { store.chromeCollapsed = false; Haptics.click() } label: {
-            Image(systemName: "chevron.up")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.white)
+        // A single SMALL orange circle (not a wide bar) so the chat feed keeps essentially the whole
+        // screen. The circle sits inside a full-width CLEAR strip that is itself the swipe-up catch
+        // zone: an upward flick from the bottom reliably reveals the chrome here, where the bare
+        // transcript drag can get swallowed near the bottom bezel. Tap the circle OR swipe up on it
+        // (or anywhere on the chat) to restore.
+        ZStack {
+            Color.clear
                 .frame(maxWidth: .infinity)
-                .frame(height: 16)                                   // squat — minimal vertical footprint
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange))
-                .contentShape(Rectangle())
+                .frame(height: 30)
+            Image(systemName: "chevron.up")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(Color.orange))
         }
-        .buttonStyle(.plain)
+        .contentShape(Rectangle())               // the whole strip is tappable/swipeable, not just the dot
+        .onTapGesture { revealChrome() }
+        // A dedicated upward drag so swiping UP from the indicator always reveals — independent of
+        // the transcript's own gesture. highPriority so it wins over any parent recognizer; the 12pt
+        // minimum keeps taps from triggering it.
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 12)
+                .onEnded { v in
+                    if v.translation.height < -12 && abs(v.translation.height) > abs(v.translation.width) {
+                        revealChrome()
+                    }
+                }
+        )
         .accessibilityLabel("Show controls")
-        .padding(.horizontal, 20)
+        .accessibilityAddTraits(.isButton)
         .padding(.bottom, BarButtonGeometry.bottomGap)
+    }
+
+    /// Bring the composer + top icons back (from the collapsed-chrome state).
+    private func revealChrome() {
+        guard store.chromeCollapsed else { return }
+        store.chromeCollapsed = false
+        Haptics.click()
     }
 
     // MARK: - Draft box (inline editor + a dual-purpose arrow on its right)
