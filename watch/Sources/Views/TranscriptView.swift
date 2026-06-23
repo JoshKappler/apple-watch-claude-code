@@ -45,10 +45,10 @@ struct TranscriptView: View {
     /// slowly, `.high` far too fast), so instead of leaning on a preset we bind the crown in units
     /// and scale to points by `crownPointsPerUnit` — making speed a real, dial-able number.
     @State private var crownUnits: Double = 0
-    /// Points of scroll per crown unit — the SINGLE speed knob. Bigger = faster. Tuned to land
-    /// between watchOS's too-slow `.medium` and too-fast `.high` so the feed matches the native
-    /// crown pace. (Speed only; the click cadence is independent — see `crownHapticStep`.)
-    private let crownPointsPerUnit: Double = 1.6
+    /// Points of scroll per crown unit — the SINGLE speed knob. Bigger = faster. Dialed by feel on
+    /// the real watch: 1.6 was much too slow, so ~3x faster lands the native crown pace. (Speed only;
+    /// the click cadence is independent — see `crownHapticStep`.)
+    private let crownPointsPerUnit: Double = 5.0
     /// Points of scroll between haptic ticks — the crown's "click" cadence. A MANUAL tick, so it's
     /// decoupled from speed: retuning the pace never turns the click into a buzz. ~one per short line.
     private let crownHapticStep: Double = 22
