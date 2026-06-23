@@ -48,6 +48,7 @@ struct AgentListView: View {
             .buttonStyle(.plain)
         }
         .navigationTitle("Agents")
+        .onAppear { Haptics.click() }   // tap feedback for landing here (moved off the hub's NavigationLink)
     }
 }
 

@@ -15,6 +15,11 @@ struct HubView: View {
     @EnvironmentObject private var store: PinchStore
 
     var body: some View {
+        // NOTE: the rows are plain NavigationLinks. They previously carried a
+        // `.simultaneousGesture(TapGesture())` to fire a tap haptic — but on watchOS that gesture
+        // competes with the link's own tap recognizer and swallows the activation, so NEITHER row
+        // navigated (the "buttons go nowhere" bug). The haptic now fires from each destination's
+        // onAppear instead, so the link's tap reaches the navigation untouched.
         NavigationStack {
             List {
                 NavigationLink {
@@ -23,7 +28,6 @@ struct HubView: View {
                     Label("Folder", systemImage: "folder")
                         .font(.system(size: 16, weight: .medium))
                 }
-                .simultaneousGesture(TapGesture().onEnded { Haptics.click() })
 
                 NavigationLink {
                     AgentListView()
@@ -38,7 +42,6 @@ struct HubView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .simultaneousGesture(TapGesture().onEnded { Haptics.click() })
             }
             .navigationTitle("Switch")
         }

@@ -14,11 +14,15 @@ struct ProjectPickerView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
-            content
-                .navigationTitle("Project")
-        }
-        .onAppear { store.listProjects() }
+        // No NavigationStack here — this view is PUSHED onto the hub's stack (HubView), and
+        // nesting a second NavigationStack inside the first can stop the push from rendering.
+        // Rely on the ambient stack and just set the title.
+        content
+            .navigationTitle("Project")
+            .onAppear {
+                Haptics.click()        // tap feedback for landing here (moved off the hub's NavigationLink)
+                store.listProjects()
+            }
     }
 
     @ViewBuilder

@@ -21,16 +21,12 @@ import {
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /**
- * Mirror of session.ts `contextWindowFor`: per-model context window so the mock's
- * usage ring reads at the right scale (1M for Opus/Sonnet/Fable, 200k for Haiku).
+ * Mirror of session.ts `contextWindowFor`: the effective context window the CLI meters
+ * against — a flat 200k for every current model (the 1M window is an opt-in beta the
+ * session never enables), so the mock's usage ring reads at the same scale as the real one.
  */
-function mockContextWindowFor(model: string): number {
-  switch (model) {
-    case "claude-haiku-4-5-20251001":
-      return 200_000;
-    default:
-      return 1_000_000;
-  }
+function mockContextWindowFor(_model: string): number {
+  return 200_000;
 }
 
 const SAMPLE_DIFF = renderDiff(

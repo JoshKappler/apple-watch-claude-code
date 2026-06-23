@@ -46,12 +46,16 @@ struct TranscriptView: View {
     /// and scale to points by `crownPointsPerUnit` — making speed a real, dial-able number.
     @State private var crownUnits: Double = 0
     /// Points of scroll per crown unit — the SINGLE speed knob. Bigger = faster. Dialed by feel on
-    /// the real watch: 1.6 was much too slow, so ~3x faster lands the native crown pace. (Speed only;
-    /// the click cadence is independent — see `crownHapticStep`.)
-    private let crownPointsPerUnit: Double = 5.0
+    /// the real watch: 1.6 was much too slow, 5.0 landed about native, and 6.5 is a touch quicker
+    /// than native (what the feed wants). (Speed only; the click cadence is independent — see
+    /// `crownHapticStep`.)
+    private let crownPointsPerUnit: Double = 6.5
     /// Points of scroll between haptic ticks — the crown's "click" cadence. A MANUAL tick, so it's
-    /// decoupled from speed: retuning the pace never turns the click into a buzz. ~one per short line.
-    private let crownHapticStep: Double = 22
+    /// decoupled from speed: retuning the pace never turns the click into a buzz. At most one tick
+    /// per crown `onChange`, so a small step can't machine-gun — it just makes every physical notch
+    /// of rotation click. 22 felt too sparse (only an occasional click); 3 is ~7x denser, a steady
+    /// fine-grained tick as you scroll.
+    private let crownHapticStep: Double = 3
     /// True only while we're writing the crown value ourselves (auto-follow pinning to the floor), so
     /// a streaming reply that keeps snapping to the bottom never machine-guns clicks — only physical
     /// rotation ticks.

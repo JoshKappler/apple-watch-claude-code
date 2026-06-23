@@ -637,22 +637,26 @@ The person has set your focus to the "${hint}" directory inside the project root
 }
 
 /**
- * Context-window size (tokens) for a model id, used to scale the watch's usage ring.
- * Windows are per-model: Opus 4.8, Sonnet 4.6, and Fable 5 ship a 1M window; Haiku 4.5
- * is 200k. Using a flat 200k made the ring read ~5x too full on every model except Haiku.
+ * Context-window size (tokens) for a model id, used to scale the watch's usage ring —
+ * matched to what the Claude Code CLI meters against, NOT the model's raw API maximum.
+ *
+ * Opus 4.8 / Sonnet 4.6 / Fable 5 advertise a 1M context window over the API, but that
+ * 1M is an opt-in beta. The Agent SDK session we drive here never sends the 1M-context
+ * beta header, so the model's effective window is the standard 200k — the same number the
+ * Claude Code CLI shows on its context meter and auto-compacts against. Scaling the ring to
+ * 1M made it read ~5x too empty (a real ~250k turn showed as 25% instead of "full, compact
+ * now"). Haiku 4.5 is natively a 200k model, so it lands here too.
  */
 function contextWindowFor(model: string): number {
   switch (model) {
     case "claude-haiku-4-5-20251001":
-      return 200_000;
     case "claude-opus-4-8":
     case "claude-sonnet-4-6":
     case "claude-fable-5":
-      return 1_000_000;
+      return 200_000;
     default:
-      // Unknown/future model: assume the current 1M default rather than the
-      // smaller Haiku window, so the ring under-reports rather than pinning full.
-      return 1_000_000;
+      // Unknown/future model: assume the standard 200k window the CLI uses by default.
+      return 200_000;
   }
 }
 
