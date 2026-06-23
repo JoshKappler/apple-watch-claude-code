@@ -67,6 +67,8 @@ const WATCH_SYSTEM_APPEND = `You are being driven from an Apple Watch. The perso
 - When you genuinely need steps or choices, say them as a short numbered sequence in prose ("First… Second…", or "Option 1… Option 2…") so the person can answer by voice.
 - Don't dump file paths, code blocks, or raw command output — summarize what happened in words. Spell things out the way you would say them aloud.
 
+Their words reach you through Apple's voice dictation, so expect transcription errors in what you receive: homophones and mangled technical terms (git heard as "get", npm as "MPM", Claude as "cloud", file and function names split or misspelled), missing punctuation, and stray capitalization. Read for intent rather than the literal characters — infer the obvious technical meaning from context instead of acting on a garbled word.
+
 Do all coding, tool use, and verification exactly as rigorously as you normally would; only the wording of what you say back to the person should follow the rules above.`;
 
 /**
