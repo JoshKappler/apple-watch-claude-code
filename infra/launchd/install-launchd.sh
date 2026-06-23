@@ -46,6 +46,8 @@ NGROK_CONFIG="${NGROK_CONFIG:-$HOME/Library/Application Support/ngrok/ngrok.yml}
 PORT="${PORT:-$(env_val PORT)}"; PORT="${PORT:-8787}"
 LOG_DIR="${LOG_DIR:-$HOME/Library/Logs/pinch}"
 LA_DIR="$HOME/Library/LaunchAgents"
+WATCHDOG_SCRIPT="$SCRIPT_DIR/pinch-watchdog.mjs"
+PUBLIC_URL=""   # set per-tunnel below; the watchdog probes it end-to-end
 
 # --- pick the tunnel --------------------------------------------------------
 TUNNEL="${TUNNEL:-auto}"
@@ -84,6 +86,10 @@ case "$TUNNEL" in
     if [[ ! -f "$TUNNEL_CONFIG" ]]; then
       echo "error: tunnel config not found: $TUNNEL_CONFIG" >&2
       echo "       See infra/cloudflared/README.md for the one-time setup." >&2; fail=1
+    else
+      # best-effort: read the ingress hostname so the watchdog can probe it.
+      _host="$(grep -E '^[[:space:]]*hostname:' "$TUNNEL_CONFIG" 2>/dev/null | head -n1 | awk '{print $2}')"
+      [[ -n "$_host" ]] && PUBLIC_URL="https://$_host"
     fi
     ;;
   ngrok)
@@ -94,6 +100,8 @@ case "$TUNNEL" in
     if [[ -z "$NGROK_DOMAIN" ]]; then
       echo "error: no ngrok domain. Set PINCH_NGROK_DOMAIN in backend/.env (reserve one" >&2
       echo "       free at dashboard.ngrok.com), or pass NGROK_DOMAIN=foo.ngrok-free.dev" >&2; fail=1
+    else
+      PUBLIC_URL="https://$NGROK_DOMAIN"
     fi
     if [[ ! -f "$NGROK_CONFIG" ]]; then
       echo "error: ngrok config not found: $NGROK_CONFIG" >&2
@@ -123,6 +131,8 @@ render() {
     -e "s|__NGROK_DOMAIN__|$(printf '%s' "$NGROK_DOMAIN" | sed 's/[&|]/\\&/g')|g" \
     -e "s|__NGROK_CONFIG__|$(printf '%s' "$NGROK_CONFIG" | sed 's/[&|]/\\&/g')|g" \
     -e "s|__PORT__|$(printf '%s' "$PORT" | sed 's/[&|]/\\&/g')|g" \
+    -e "s|__PUBLIC_URL__|$(printf '%s' "$PUBLIC_URL" | sed 's/[&|]/\\&/g')|g" \
+    -e "s|__WATCHDOG_SCRIPT__|$(printf '%s' "$WATCHDOG_SCRIPT" | sed 's/[&|]/\\&/g')|g" \
     -e "s|__LOG_DIR__|$(printf '%s' "$LOG_DIR" | sed 's/[&|]/\\&/g')|g" \
     "$template" > "$dest"
 }
@@ -133,19 +143,39 @@ install_one() {
   echo "Installing $label -> $dest"
   render "$template" "$dest"
 
-  # bootout first (ignore failure if not loaded), then bootstrap + kickstart.
-  launchctl bootout "$GUI_DOMAIN/$label" 2>/dev/null || true
-  launchctl bootstrap "$GUI_DOMAIN" "$dest"
+  # If already loaded, bootout and WAIT for teardown to finish. Bootstrapping a
+  # label whose previous instance is still unloading fails with EIO
+  # ("Bootstrap failed: 5: Input/output error"), so poll until it's really gone.
+  if launchctl print "$GUI_DOMAIN/$label" >/dev/null 2>&1; then
+    launchctl bootout "$GUI_DOMAIN/$label" 2>/dev/null || true
+    for _ in $(seq 1 50); do
+      launchctl print "$GUI_DOMAIN/$label" >/dev/null 2>&1 || break
+      sleep 0.2
+    done
+  fi
+
+  # Bootstrap, retrying to ride out launchd's async teardown race.
+  local i
+  for i in 1 2 3 4 5; do
+    if launchctl bootstrap "$GUI_DOMAIN" "$dest" 2>/dev/null; then break; fi
+    if [[ "$i" -eq 5 ]]; then
+      echo "  bootstrap kept failing; surfacing the real error:" >&2
+      launchctl bootstrap "$GUI_DOMAIN" "$dest"   # let it print + abort via set -e
+    fi
+    sleep 0.6
+  done
+
   launchctl kickstart -k "$GUI_DOMAIN/$label"
   echo "  loaded and kickstarted."
 }
 
 echo "Tunnel: $TUNNEL"
-install_one "com.pinch.server" "$SCRIPT_DIR/com.pinch.server.plist"
-install_one "com.pinch.tunnel" "$TUNNEL_TEMPLATE"
+install_one "com.pinch.server"   "$SCRIPT_DIR/com.pinch.server.plist"
+install_one "com.pinch.tunnel"   "$TUNNEL_TEMPLATE"
+install_one "com.pinch.watchdog" "$SCRIPT_DIR/com.pinch.watchdog.plist"
 
 echo
-echo "Done. Logs: $LOG_DIR/{server,tunnel}.{out,err}.log"
+echo "Done. Logs: $LOG_DIR/{server,tunnel,watchdog}.{out,err}.log"
 if [[ "$TUNNEL" == "ngrok" ]]; then
   echo "Watch URL:  wss://$NGROK_DOMAIN/ws   (token: PINCH_TOKEN in backend/.env)"
 fi

@@ -75,8 +75,8 @@ npm run build && npm start
 | `PINCH_MODEL` | `claude-opus-4-8` | model id passed to the SDK |
 | `LOG_LEVEL` | `info` | `trace`…`fatal` |
 
-> `PINCH_NGROK_DOMAIN` is read by the launchers (`infra/start-pinch.command`,
-> `pinch-up.sh`), not by the backend itself.
+> `PINCH_NGROK_DOMAIN` is read by the always-on launchd service installer
+> (`npm run up`), not by the backend itself.
 
 ## Auth
 

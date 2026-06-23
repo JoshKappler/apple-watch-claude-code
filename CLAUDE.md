@@ -107,7 +107,8 @@ change how the watch renders/speaks replies, keep this append in sync.
 
 - **Restart the backend to apply backend changes.** The tether is a long-running
   `node dist/index.js`. Rebuilding `dist/` is NOT enough — the running process
-  serves stale code until killed + relaunched (via `infra/start-pinch.command`).
+  serves stale code until killed + relaunched (via `launchctl kickstart -k
+  gui/$(id -u)/com.pinch.server`, or `npm run down && npm run up`).
   Tell: a brand-new session whose context ring reads ~25% full = a stale process.
   The watch can trigger this itself: **Settings → Restart backend** POSTs
   `/api/restart` (`httpApi.handleRestart`), which spawns the detached
@@ -133,7 +134,7 @@ change how the watch renders/speaks replies, keep this append in sync.
 | `PINCH_PROJECTS` | Explicit absolute repo allowlist. At least one of this / `PROJECT_ROOTS` required in real mode. |
 | `PINCH_MOCK` | `1` = scripted keyless agent for end-to-end tests. |
 | `PINCH_MODEL` | Default `claude-opus-4-8`. Watch can also send opus/sonnet/haiku/fable per `httpApi.ModelId`. |
-| `PINCH_NGROK_DOMAIN` | Read by the launchers (not `config.ts`). The stable ngrok free static domain. |
+| `PINCH_NGROK_DOMAIN` | Read by `npm run up` (not `config.ts`). The stable ngrok free static domain. |
 | `PORT` | Default 8787. |
 
 Config is Zod-validated in `backend/src/config.ts` and fails fast at boot.
@@ -145,15 +146,15 @@ The watch URL is a **stable ngrok free static domain** (set as
 build. ngrok free = one agent session at a time. Cloudflare named-tunnel scaffolding
 exists in `infra/cloudflared/` but is unused (no domain).
 
-- **`infra/start-pinch.command`** — double-click launcher. Idempotent + detached
-  (`nohup`): reuses a healthy backend on `:8787` and a live ngrok tunnel on the
-  static domain, starts only what's missing, prints the URL + token. Requires the
-  backend to be built (`npm run build`) and ngrok authed.
-- **`pinch-up.sh`** — foreground "build + run + tunnel" one-shot; auto-detects
-  cloudflared config → ngrok → none. Ctrl-C tears everything down.
-- Persistence is **session-level** (survives logout, not reboot). launchd is
-  documented in `infra/launchd/` but hangs on `~/Desktop` without a TCC
-  Files-and-Folders / Full Disk grant for node — declined; use the launcher.
+- **`npm run up`** (`infra/launchd/install-launchd.sh`) — installs three
+  LaunchAgents (`com.pinch.server`, `com.pinch.tunnel`, `com.pinch.watchdog`) into
+  `~/Library/LaunchAgents` and loads them. They start at login (`RunAtLoad`),
+  restart on crash (`KeepAlive` on non-clean exit), and the watchdog re-kicks or
+  re-bootstraps anything wedged/booted-out every 120s — always-on. The installer
+  reads `PINCH_NGROK_DOMAIN` from `backend/.env` to keep the URL fixed. Build first
+  (`npm run build`); the installer does not build.
+- **`npm run down`** (`infra/launchd/uninstall-launchd.sh`) — boots out + removes
+  the agents.
 
 ## Secrets
 

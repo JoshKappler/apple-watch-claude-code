@@ -112,7 +112,7 @@ elif [[ -f "$SECRETS_EXAMPLE" ]]; then
       ok "Created watch/Sources/Secrets.swift (gitignored)."
     fi
   fi
-  info "Edit serverURL in it to your tunnel URL (pinch-up.sh prints one)."
+  info "Edit serverURL in it to your tunnel URL (npm run up prints one)."
 else
   warn "watch/Secrets.example.swift not found; cannot create Secrets.swift."
 fi
@@ -132,13 +132,16 @@ cat <<'EOF'
   1. Edit backend/.env: set PINCH_PROJECT_ROOTS (and auth — see above).
   2. Install deps:        npm install
   3. Test with the sim:   npm run sim        (open the browser "watch")
-  4. Start a remote session the watch can reach, in ONE command:
-       ./pinch-up.sh      (builds, runs the backend, opens a tunnel,
-                           and prints the exact wss URL + token to enter)
+  4. Install the always-on service (starts at login, restarts on crash,
+     watchdog re-kicks anything wedged), in ONE command:
+       npm run up         (= infra/launchd/install-launchd.sh — builds nothing,
+                           so run `npm run build` first; prints the wss URL + token)
+       npm run down       (stop + remove it)
   5. In the watch/sim, set URL = wss://<your-host>/ws and the PINCH_TOKEN.
 
-  Stable URL across runs: reserve a domain and pass PINCH_NGROK_DOMAIN=...,
-  or set up the named Cloudflare Tunnel (infra/cloudflared/README.md).
+  Stable URL across runs: reserve a free domain and set PINCH_NGROK_DOMAIN in
+  backend/.env, or set up the named Cloudflare Tunnel (infra/cloudflared/README.md).
+  The installer reads that domain and keeps the URL fixed across every restart.
 
   Full walkthrough: docs/SETUP.md   •   Security: infra/SECURITY.md
 EOF

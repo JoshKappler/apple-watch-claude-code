@@ -26,6 +26,9 @@ remove_one() {
   fi
 }
 
+# Order matters: remove the watchdog FIRST, otherwise its next run would
+# re-bootstrap the server/tunnel we're about to tear down.
+remove_one "com.pinch.watchdog"
 remove_one "com.pinch.tunnel"
 remove_one "com.pinch.server"
 

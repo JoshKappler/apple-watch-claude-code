@@ -34,12 +34,12 @@ ngrok free allows **one agent session at a time**, which is all Pinch needs.
 
 ## Run it
 
-The launcher does everything (reuses a live tunnel, else starts one on your
-domain):
+The always-on service does everything (backend + ngrok on the static domain,
+start at login, restart on crash, watchdog-monitored):
 
 ```bash
 npm run build
-infra/start-pinch.command        # backend + ngrok on the static domain, under nohup
+npm run up                       # install + start the launchd service
 ```
 
 Or by hand:
@@ -59,12 +59,12 @@ for the watch's HTTP transport). The simulator uses
   transport — see `infra/SECURITY.md`.
 - The watch sends `ngrok-skip-browser-warning` on every request to bypass the
   free-tier interstitial. (Already wired in the app.)
-- If `start-pinch.command` reports ngrok didn't come up: check you're authed
-  (`ngrok config add-authtoken …`) and that no stale `ngrok` process holds the
-  single free session (`pkill -f 'ngrok http'`). Logs: `/tmp/pinch-ngrok.log`.
+- If ngrok didn't come up: check you're authed (`ngrok config add-authtoken …`)
+  and that no stale `ngrok` process holds the single free session (`pkill -f
+  'ngrok http'`). Logs: `/tmp/pinch-ngrok.log`.
 - **No reserved domain?** A bare `ngrok http 8787` still works for a quick test,
   but the URL changes every run, so you'd re-enter it on the watch each time —
   reserve the free static domain instead.
-- **Want it to survive logout/crash?** Run ngrok under launchd similarly to the
-  Cloudflare tunnel agent (swap the `ProgramArguments` in a copy of
-  `com.pinch.tunnel.plist` for `ngrok http --url=https://$PINCH_NGROK_DOMAIN 8787`).
+- **Want it to survive logout/crash/reboot?** That's the default: `npm run up`
+  installs an always-on launchd service that runs ngrok on `$PINCH_NGROK_DOMAIN`,
+  restarts on crash, and is watchdog-monitored. See `infra/launchd/`.

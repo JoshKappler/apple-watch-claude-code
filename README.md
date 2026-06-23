@@ -194,19 +194,19 @@ you can't sign with it.
 
 ### Part 4 — Launch and connect
 
-Bring the backend + tunnel up with one command:
+Build once, then install the always-on service:
 
 ```bash
-npm run build                 # build the backend once (the launcher runs from dist/)
-infra/start-pinch.command     # or double-click it in Finder
+npm run build                 # build the backend (npm run up does NOT build)
+npm run up                    # install + start the launchd service
 ```
 
-`start-pinch.command` is idempotent and detached: it reuses a healthy backend and
-a live tunnel, starts only what's missing, runs everything under `nohup` (close
-the window and walk away — it keeps serving while the Mac is logged in and
-awake), and prints the exact URL + token. Because the ngrok domain is stable, the
-URL baked into the watch keeps working — you only ever re-enter it if you reset
-the watch's settings.
+`npm run up` installs three LaunchAgents (`com.pinch.server`, `com.pinch.tunnel`,
+`com.pinch.watchdog`) and loads them. They start at login, restart on crash, and a
+watchdog re-kicks anything that's wedged or booted-out every 120s. Net: always-on.
+`npm run down` stops and removes it. Because the ngrok domain is stable, the URL
+baked into the watch keeps working — you only ever re-enter it if you reset the
+watch's settings.
 
 Open the app on your watch, take your phone out of range (or turn Wi-Fi off to
 prove cellular), and send a message. You're now driving an agent on your Mac from
@@ -270,7 +270,7 @@ thing between the public internet and an agent that can run `bash` in your repos
 | `simulator/` | Browser "watch" — test end-to-end with no Apple hardware. |
 | `infra/` | Tunnels (ngrok, cloudflared), launchers, launchd, cloud mode, token gen, `SECURITY.md`. |
 | `docs/` | `PLAN.md`, `DECISIONS.md`, `SETUP.md`, `STATUS.md`. |
-| `setup.sh` · `pinch-up.sh` | Bootstrap, and a foreground "build + run + tunnel" one-shot. |
+| `setup.sh` | Bootstrap. The always-on service installs with `npm run up` (`infra/launchd/`). |
 
 ---
 
@@ -295,16 +295,16 @@ thing between the public internet and an agent that can run `bash` in your repos
 
 ## Alternatives
 
-- **Other tunnels.** `pinch-up.sh` also supports a named **Cloudflare Tunnel**
-  (if you own a domain) and auto-detects what's configured. See
+- **Other tunnels.** The launchd installer also supports a named **Cloudflare
+  Tunnel** (if you own a domain) and auto-detects what's configured. See
   `infra/cloudflared/README.md` and `infra/ngrok/README.md`.
 - **Always-on cloud mode** (Fly.io). Runs without your Mac, but only sees
   **pushed** code and pushes its work back as a branch — it is *not* remote
   control of your Mac. See `infra/cloud/README.md`.
-- **Persistence.** The Mac setup runs at the session level (survives logout, not
-  a reboot). After a reboot, re-run `start-pinch.command` — the URL stays the
-  same. There's a `launchd` path in `infra/launchd/`, with caveats documented
-  there.
+- **Persistence.** `npm run up` installs a launchd service that starts at login,
+  restarts on crash, and is watchdog-monitored, so it comes back after a reboot.
+  The stable ngrok domain keeps the URL the same across restarts. Details in
+  `infra/launchd/`.
 
 ---
 

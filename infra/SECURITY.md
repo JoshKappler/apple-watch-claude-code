@@ -66,8 +66,8 @@ NEW=$(node infra/scripts/gen-token.mjs --raw)
 
 # 2a. Mac: update backend/.env, then restart the server so it loads the new token.
 #     (edit PINCH_TOKEN=$NEW in backend/.env)
-#     launchd install:   launchctl kickstart -k "gui/$(id -u)/com.pinch.server"
-#     nohup launcher:    pkill -f 'dist/index.js' && infra/start-pinch.command
+#     restart the server:   launchctl kickstart -k "gui/$(id -u)/com.pinch.server"
+#     (or just: npm run down && npm run up)
 
 # 2b. Cloud: 
 fly secrets set PINCH_TOKEN="$NEW"     # triggers a redeploy/restart
@@ -85,18 +85,18 @@ access immediately** — fastest first:
 
 **Mac mode**
 
-If you launched via `infra/start-pinch.command` (nohup, the default), kill the
-processes directly — fastest first:
+The always-on launchd service (`npm run up`) is watchdog-monitored: the watchdog
+re-kicks anything stopped within ~120s, so `pkill` alone won't hold. Stop it for
+real:
 
 ```bash
-# Kill the tunnel: the public URL goes dark instantly.
-pkill -f 'ngrok http'                 # ngrok
-# or, on the Cloudflare path:
-launchctl bootout "gui/$(id -u)/com.pinch.tunnel"   # if installed under launchd
+# Durable kill: stop + remove all three agents (backend, tunnel, watchdog).
+npm run down                          # or infra/launchd/uninstall-launchd.sh
 
-# And/or stop the backend (drops all live sessions).
-pkill -f 'dist/index.js'              # nohup launcher
-launchctl bootout "gui/$(id -u)/com.pinch.server"   # if installed under launchd
+# Temporary "cut the public exposure now": drop just the tunnel.
+launchctl bootout "gui/$(id -u)/com.pinch.tunnel"
+# ^ the public URL goes dark instantly, but the watchdog brings it back within
+#   ~120s. For a durable kill use `npm run down`.
 
 # Nuclear: disable the domain at the edge.
 #   ngrok:      delete the reserved domain in the ngrok dashboard

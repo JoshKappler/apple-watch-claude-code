@@ -4,8 +4,8 @@ A **named** Cloudflare Tunnel gives Pinch a stable public hostname on **your own
 domain**, with TLS terminated at Cloudflare's edge. Free, your own hostname, no
 inbound ports opened on your Mac. Use this if you already have a domain on
 Cloudflare; if you don't, the **ngrok free static domain** ([`../ngrok/`](../ngrok/))
-is the recommended no-domain default. `pinch-up.sh` auto-detects a `~/.cloudflared/
-config.yml` and prefers it when present.
+is the recommended no-domain default. `npm run up` auto-detects a `~/.cloudflared/
+config.yml` and prefers it when present (force with `TUNNEL=cloudflared`).
 
 ```
 Watch (HTTP /api) / Simulator (/ws) ⇄ agent.<yourdomain> ⇄ Cloudflare edge ⇄ cloudflared ⇄ http://localhost:8787

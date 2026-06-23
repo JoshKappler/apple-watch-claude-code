@@ -32,7 +32,7 @@ an ngrok domain, and sign the watch app in Xcode with your Apple Team.
   log, resume rule, and idle sweep via `sessionRegistry.ts`.
 - **Tunnel.** A **stable ngrok free static domain** (`PINCH_NGROK_DOMAIN`). The
   URL never changes, so restarts don't strand the baked watch build. Bring it up
-  by double-clicking `infra/start-pinch.command` (idempotent, detached).
+  with the always-on launchd service (`npm run up`).
 - **Auth to Anthropic.** `PINCH_AUTH=subscription` (default) uses the Mac's Claude
   Code login (Claude Max/Pro keychain) — no API key. `apikey` mode uses
   `ANTHROPIC_API_KEY`.

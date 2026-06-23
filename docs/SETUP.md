@@ -32,7 +32,7 @@ Apple Watch  ⇄  HTTPS + ~1.2s poll  ⇄  ngrok edge  ⇄  ngrok agent  ⇄  ba
 | `PINCH_AUTH` | `backend/.env` | `subscription` (default — uses your Mac's Claude Code login, no key) or `apikey`. |
 | `ANTHROPIC_API_KEY` | `backend/.env` | Only when `PINCH_AUTH=apikey`. Not needed in subscription or mock mode. |
 | `PINCH_PROJECT_ROOTS` | `backend/.env` | Parent dir(s) to scan — every child repo becomes a selectable project. |
-| `PINCH_NGROK_DOMAIN` | `backend/.env` | Your reserved ngrok free static domain (read by the launchers). |
+| `PINCH_NGROK_DOMAIN` | `backend/.env` | Your reserved ngrok free static domain (read by `npm run up`). |
 
 ---
 
@@ -119,18 +119,17 @@ agent session at a time, which is all you need.
 ### 4. Build the backend and bring the tether up
 
 ```bash
-npm run build                 # the launcher runs from dist/
-infra/start-pinch.command     # or double-click it in Finder
+npm run build                 # build the backend (npm run up does NOT build)
+npm run up                    # install + start the always-on launchd service
 ```
 
-`start-pinch.command` is idempotent and detached: it reuses a healthy backend on
-`:8787` and a live ngrok tunnel on your static domain, starts only what's
-missing, runs everything under `nohup` (close the window and walk away — it
-serves while the Mac is logged in and awake), and prints the URL + token.
-
-For a foreground "build + run + tunnel" one-shot that tears everything down on
-Ctrl-C, use `pinch-up.sh` instead (it auto-detects a Cloudflare config → ngrok →
-LAN-only).
+`npm run up` installs three LaunchAgents (`com.pinch.server`, `com.pinch.tunnel`,
+`com.pinch.watchdog`) on `:8787` + your static ngrok domain. They start at login,
+restart on crash, and a watchdog re-kicks anything wedged/booted-out every 120s —
+always-on. The installer reads `PINCH_NGROK_DOMAIN` from `backend/.env` to keep
+the URL fixed. It auto-detects the tunnel (`~/.cloudflared/config.yml` →
+cloudflared, else ngrok; force with `TUNNEL=ngrok` / `TUNNEL=cloudflared`).
+`npm run down` stops and removes it.
 
 ### 5. The watch app
 
@@ -193,8 +192,8 @@ query string.
 - **Named Cloudflare Tunnel (own domain, stable):** if you have a domain on
   Cloudflare, `cloudflared tunnel login/create/route`, then
   `cp infra/cloudflared/config.example.yml ~/.cloudflared/config.yml` and fill in
-  the UUID + hostname. `pinch-up.sh` auto-detects the config and uses it. Full
-  steps: `infra/cloudflared/README.md`.
+  the UUID + hostname. `npm run up` auto-detects the config and uses it (force
+  with `TUNNEL=cloudflared`). Full steps: `infra/cloudflared/README.md`.
 - **Fly.io cloud (always-on, no Mac):** `infra/cloud/README.md`. Clones your
   GitHub repos at boot; the agent only sees **pushed** code and pushes its work
   back as a branch. It is *not* remote control of your Mac. Not Vercel —

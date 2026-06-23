@@ -11,7 +11,7 @@
 //
 //  Fields:
 //   - serverURL: your tunnel URL, e.g. wss://agent.yourdomain.com — or the ephemeral
-//     ngrok / quick-tunnel host that pinch-up.sh prints. (The watch transport rewrites
+//     ngrok / quick-tunnel host that npm run up prints. (The watch transport rewrites
 //     wss:// → https:// internally.)
 //   - token:     the PINCH_TOKEN from backend/.env. Must match the backend exactly.
 //

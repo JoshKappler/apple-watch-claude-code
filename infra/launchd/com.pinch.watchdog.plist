@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Pinch watchdog LaunchAgent template.
+
+  Runs infra/launchd/pinch-watchdog.mjs every StartInterval seconds to health-check
+  the backend + tunnel and re-kick anything that is wedged or got booted out. This
+  is the periodic layer on top of each service's KeepAlive (which only catches a
+  process that actually exited).
+
+  It runs under node (not bash): launchd-spawned /bin/bash is blocked by macOS TCC
+  from executing scripts under ~/Desktop, but node reading its own script there is
+  allowed — same as the backend agent.
+
+  Placeholders (substituted by install-launchd.sh):
+    __NODE_BIN__         absolute path to node (e.g. /opt/homebrew/bin/node)
+    __WATCHDOG_SCRIPT__  absolute path to pinch-watchdog.mjs
+    __PORT__             local backend port (e.g. 8787)
+    __PUBLIC_URL__       public URL to probe end-to-end (e.g. https://foo.ngrok-free.dev)
+    __LOG_DIR__          absolute path for logs (e.g. /Users/josh/Library/Logs/pinch)
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pinch.watchdog</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__NODE_BIN__</string>
+        <string>__WATCHDOG_SCRIPT__</string>
+    </array>
+
+    <!-- Periodic, not long-running: run at load and then every interval. No
+         KeepAlive (the script exits each run by design). -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>120</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>PINCH_PORT</key>
+        <string>__PORT__</string>
+        <key>PINCH_PUBLIC_URL</key>
+        <string>__PUBLIC_URL__</string>
+        <key>LOG_DIR</key>
+        <string>__LOG_DIR__</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__LOG_DIR__/watchdog.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__LOG_DIR__/watchdog.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

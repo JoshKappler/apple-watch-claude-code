@@ -36,7 +36,7 @@ the watch, a WebSocket for the simulator — carrying the same message shapes):
 - **Watch app** (`watch/`): native watchOS SwiftUI app. Voice dictation → message, double-tap to send, Digital Crown to scroll, Action button for push-to-talk, wrist-shake to cancel, taps to approve/decline. Reads responses aloud.
 - **Protocol** (`packages/protocol/`): shared TypeScript types + `PROTOCOL.md` — the wire contract both sides implement.
 - **Simulator** (`simulator/`): a browser-based watch face that speaks the exact same protocol. Lets us (and you) test the whole system end-to-end **without** Apple hardware or code signing. This is how the backend gets verified today.
-- **Infra** (`infra/`): a stable **ngrok** free static domain (recommended) plus Cloudflare named-tunnel scaffolding, a double-click launcher (`start-pinch.command`), `launchd` agents, and a Fly.io cloud mode.
+- **Infra** (`infra/`): a stable **ngrok** free static domain (recommended) plus Cloudflare named-tunnel scaffolding, an always-on `launchd` service (`npm run up`), and a Fly.io cloud mode.
 
 ## Why this architecture (short version)
 
