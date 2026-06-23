@@ -85,16 +85,13 @@ struct InlineDraftEditor: View {
         .onAppear { if ownsCrown { focused = true; caretValue = Double(clampedCaret(caretIndex)) } }
     }
 
-    // MARK: Collapsed — auto-growing preview. NOT one line: a single line made a long dictation
-    // feel "capped" (you could only see the head, the rest read as lost). The box now grows with
-    // the text up to `collapsedLineCap` lines so a normal multi-sentence message is fully readable
-    // inline; only a genuinely long draft truncates (tail), and the orange UP chevron expands it to
-    // the full-screen scroller. The underlying string is never capped — this is purely the viewport.
-    private static let collapsedLineCap = 5
+    // MARK: Collapsed — inert one-line preview (no dictation on tap; that's the mic button now).
+    // Stays ONE line on purpose: the orange UP chevron on the right of the box is the intended way
+    // to enlarge it (expands to the full-screen scroller). The draft string itself is never capped.
     private var collapsed: some View {
         Text(isEmpty ? "Tap mic to dictate…" : text)
             .font(.system(size: 14))
-            .lineLimit(1...Self.collapsedLineCap)
+            .lineLimit(1)
             .truncationMode(.tail)
             .multilineTextAlignment(.leading)
             .frame(maxWidth: .infinity, alignment: .leading)
