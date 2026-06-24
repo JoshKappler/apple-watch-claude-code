@@ -14,48 +14,74 @@ struct AgentListView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
+        // Split into typed helpers below: a single monolithic List{ForEach{Section{ForEach…}}} mixed
+        // with a trailing Button makes SwiftUI's @ViewBuilder type-inference blow up ("unable to
+        // type-check in reasonable time"). Each helper returns a concrete `some View` instead.
         List {
-            ForEach(store.agents) { agent in
-                AgentRow(
-                    agent: agent,
-                    isFocused: agent.id == store.focusedAgentId,
-                    focus: {
-                        store.focusAgent(agent.id)
-                        dismiss()
-                    }
-                )
-                .swipeActions(edge: .trailing) {
-                    // Guard the last agent — removing it would leave nothing to drive.
-                    if store.agents.count > 1 {
-                        Button(role: .destructive) {
-                            store.removeAgent(agent.id)
-                        } label: {
-                            Label("Remove", systemImage: "trash")
-                        }
-                    }
-                }
+            // One SECTION per project (the header names the folder) so agents in different projects
+            // are visually separated. A single project = a single section.
+            ForEach(store.agentGroups) { group in
+                section(for: group)
             }
-
-            // Add a fresh agent and drop straight onto its clean screen.
-            Button {
-                store.createAgent()
-                dismiss()
-            } label: {
-                Label("New agent", systemImage: "plus.circle.fill")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(Color.pinch)
-            }
-            .buttonStyle(.plain)
+            Section { newAgentButton }
         }
         .navigationTitle("Agents")
         .onAppear { Haptics.click() }   // tap feedback for landing here (moved off the hub's NavigationLink)
     }
+
+    @ViewBuilder
+    private func section(for group: AgentGroup) -> some View {
+        Section {
+            ForEach(group.rows) { row in
+                agentRow(row)
+            }
+        } header: {
+            Text(group.name)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func agentRow(_ row: AgentRowItem) -> some View {
+        AgentRow(
+            label: row.label,
+            isFocused: row.id == store.focusedAgentId,
+            focus: {
+                store.focusAgent(row.id)
+                dismiss()
+            }
+        )
+        .swipeActions(edge: .trailing) {
+            // Guard the last agent — removing it would leave nothing to drive.
+            if store.agents.count > 1 {
+                Button(role: .destructive) {
+                    store.removeAgent(row.id)
+                } label: {
+                    Label("Remove", systemImage: "trash")
+                }
+            }
+        }
+    }
+
+    // Add a fresh agent and drop straight onto its clean screen.
+    private var newAgentButton: some View {
+        Button {
+            store.createAgent()
+            dismiss()
+        } label: {
+            Label("New agent", systemImage: "plus.circle.fill")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(Color.pinch)
+        }
+        .buttonStyle(.plain)
+    }
 }
 
-/// One agent row: a coral check when focused, then the agent's label (the folder/root it's scoped
-/// to). The whole row is tappable to focus.
+/// One agent row: a coral check when focused, then the agent's label (its auto-title — what it's
+/// doing — or an "Agent N" enumerator within the project). The whole row is tappable to focus.
 private struct AgentRow: View {
-    let agent: AgentSlot
+    let label: String
     let isFocused: Bool
     let focus: () -> Void
 
@@ -66,13 +92,13 @@ private struct AgentRow: View {
                     .font(.system(size: 12))
                     .foregroundStyle(Color.pinch)
             }
-            Text(agent.label)
+            Text(label)
                 .font(.system(size: 15, weight: isFocused ? .semibold : .regular))
                 .lineLimit(1)
             Spacer(minLength: 4)
         }
         .contentShape(Rectangle())
         .onTapGesture(perform: focus)
-        .accessibilityLabel(isFocused ? "\(agent.label), focused" : agent.label)
+        .accessibilityLabel(isFocused ? "\(label), focused" : label)
     }
 }

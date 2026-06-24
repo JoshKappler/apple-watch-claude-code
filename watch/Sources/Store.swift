@@ -50,6 +50,30 @@ enum ThinkingLevel: String, CaseIterable, Identifiable {
 struct AgentSlot: Identifiable, Codable, Equatable {
     let id: String
     var label: String
+    /// Folder/root basename this agent is scoped to — drives the switcher's per-project SECTION
+    /// header and grouping. Set once the agent's project is known (`ready`/select); nil until then.
+    var projectName: String? = nil
+    /// Full project root path — the stable GROUP KEY, so two different dirs that share a basename
+    /// don't merge and the group survives a relabel. nil until known.
+    var projectPath: String? = nil
+    /// A 1-3 word summary of what this agent is doing, derived WATCH-SIDE from its FIRST prompt (no
+    /// backend, no LLM). nil until the first prompt is sent; once set it's the row's primary label.
+    var title: String? = nil
+}
+
+/// A single switcher row, with its display label already resolved (title, else an "Agent N"
+/// enumerator). Precomputed in the store so the SwiftUI list stays a trivial ForEach.
+struct AgentRowItem: Identifiable {
+    let id: String      // the agent slot id
+    let label: String
+}
+
+/// One project's worth of agents — a labeled section in the switcher, which is how the projects get
+/// their separators. `id` is the stable group key (project path, else name).
+struct AgentGroup: Identifiable {
+    let id: String
+    let name: String
+    let rows: [AgentRowItem]
 }
 
 /// The contract names the store type `Store`; the concrete ObservableObject is `PinchStore`.
@@ -262,7 +286,16 @@ final class PinchStore: ObservableObject {
         // "default" agent so the app always has exactly one focused agent to drive.
         if let data = d.data(forKey: SettingsKey.agents),
            let saved = try? JSONDecoder().decode([AgentSlot].self, from: data), !saved.isEmpty {
-            agents = saved
+            // Back-compat: pre-grouping slots only had `label` (which WAS the project name), so seed
+            // `projectName` from it — except the "Agent N" placeholder — so they group correctly on
+            // upgrade instead of waiting to be focused. A real `ready` overwrites it precisely.
+            agents = saved.map { slot in
+                guard slot.projectName == nil, !slot.label.isEmpty, !slot.label.hasPrefix("Agent ")
+                else { return slot }
+                var s = slot
+                s.projectName = slot.label
+                return s
+            }
         } else {
             agents = [AgentSlot(id: "default", label: "Agent 1")]
         }
@@ -283,12 +316,61 @@ final class PinchStore: ObservableObject {
     /// the root). Called when `ready`/`select_project` tells us the agent's project, so the switcher
     /// shows "jobhunt" instead of a generic "Agent 2".
     private func updateFocusedLabel() {
-        guard let name = currentProject?.name,
+        guard let project = currentProject,
               let idx = agents.firstIndex(where: { $0.id == focusedAgentId }) else { return }
-        if agents[idx].label != name {
-            agents[idx].label = name
+        var slot = agents[idx]
+        var changed = false
+        // `label` stays the bare project name (legacy fallback + accessibility); `projectName`/`Path`
+        // feed the switcher's grouping + section header. The TITLE (what it's doing) is set separately
+        // from the first prompt and is what the row actually shows.
+        if slot.label != project.name { slot.label = project.name; changed = true }
+        if slot.projectName != project.name { slot.projectName = project.name; changed = true }
+        if slot.projectPath != project.path { slot.projectPath = project.path; changed = true }
+        if changed {
+            agents[idx] = slot
             persistAgents()
         }
+    }
+
+    /// Group the running agents by project (first-appearance order preserved), so the switcher shows
+    /// a labeled section per project — that's what puts a separator between different projects.
+    var agentGroups: [AgentGroup] {
+        var order: [String] = []
+        var byKey: [String: [AgentSlot]] = [:]
+        var nameByKey: [String: String] = [:]
+        for a in agents {
+            let key = a.projectPath ?? a.projectName ?? "—"
+            if byKey[key] == nil { order.append(key); byKey[key] = []; nameByKey[key] = a.projectName ?? "Agent" }
+            byKey[key]?.append(a)
+        }
+        return order.map { key in
+            // Resolve each row's label here: the agent's auto-title, else an "Agent N" enumerator that
+            // counts only UNtitled agents so two same-folder agents are never identical.
+            var untitled = 0
+            let rows = (byKey[key] ?? []).map { a -> AgentRowItem in
+                if let t = a.title, !t.isEmpty { return AgentRowItem(id: a.id, label: t) }
+                untitled += 1
+                return AgentRowItem(id: a.id, label: "Agent \(untitled)")
+            }
+            return AgentGroup(id: key, name: nameByKey[key] ?? "Agent", rows: rows)
+        }
+    }
+
+    /// Derive a short (≤3 word) title from an agent's FIRST prompt — watch-side, no LLM. Strips leading
+    /// filler/stop words and keeps the first few content words so the switcher reads like a task
+    /// ("Add delete button") instead of the folder name. Best-effort: empty in → empty out.
+    func makeAgentTitle(from prompt: String) -> String {
+        let stop: Set<String> = [
+            "the", "a", "an", "to", "of", "for", "and", "or", "but", "in", "on", "at", "is", "it",
+            "this", "that", "please", "can", "you", "could", "would", "i", "we", "my", "me", "want",
+            "need", "hey", "ok", "okay", "so", "just", "like", "up", "with", "about", "let", "lets", "then",
+        ]
+        let tokens = prompt.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        let content = tokens.filter { !stop.contains($0) && $0.count > 1 }
+        let picked = Array((content.isEmpty ? tokens : content).prefix(3))
+        guard let first = picked.first else { return "" }
+        let head = first.prefix(1).uppercased() + first.dropFirst()
+        return ([head] + picked.dropFirst()).joined(separator: " ")
     }
 
     /// Push the current model + thinking to the backend, but only when a session is live.
@@ -422,6 +504,13 @@ final class PinchStore: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let id = UUID()
+        // Title the focused agent from its FIRST prompt (once), so the switcher names it after what
+        // it's doing instead of the bare folder. Only fills an empty title — later turns don't rename.
+        if let idx = agents.firstIndex(where: { $0.id == focusedAgentId }),
+           agents[idx].title?.isEmpty ?? true {
+            let t = makeAgentTitle(from: trimmed)
+            if !t.isEmpty { agents[idx].title = t; persistAgents() }
+        }
         transcript.append(.user(id: id, text: trimmed, delivery: .sending))
         draft = ""
         caretIndex = 0
