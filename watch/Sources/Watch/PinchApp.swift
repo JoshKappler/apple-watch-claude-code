@@ -52,7 +52,11 @@ struct PinchApp: App {
                 .environmentObject(store)
                 .onAppear {
                     appDelegate.push = store.push
-                    store.configure(serverURL: serverURL, token: token, speakerMuted: speakerMuted)
+                    if Demo.isActive {
+                        store.applyDemoSeed()   // PINCH_DEMO launch arg → offline portfolio state
+                    } else {
+                        store.configure(serverURL: serverURL, token: token, speakerMuted: speakerMuted)
+                    }
                     consumeDictationRequest()   // cold launch via the Action button
                 }
                 // Action button (warm app) → start dictation.
@@ -62,8 +66,12 @@ struct PinchApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     switch phase {
                     case .active:
-                        store.configure(serverURL: serverURL, token: token, speakerMuted: speakerMuted)
-                        store.onActive()
+                        if Demo.isActive {
+                            store.applyDemoSeed()
+                        } else {
+                            store.configure(serverURL: serverURL, token: token, speakerMuted: speakerMuted)
+                            store.onActive()
+                        }
                     case .background:
                         // Only a REAL background (screen off / app suspended) drops the socket.
                         store.onBackground()

@@ -15,6 +15,28 @@ struct RootView: View {
     @State private var showHub = false
 
     var body: some View {
+        // PORTFOLIO: PINCH_DEMO can stage a deep screen (the agent switcher, settings, the mode
+        // picker) directly as the root so it can be screenshotted without driving navigation. A
+        // normal launch (Demo.screen == nil) always falls through to the real app.
+        if let demo = Demo.screen, ["agents", "settings", "mode", "project"].contains(demo) {
+            NavigationStack { demoRoot(demo) }
+        } else {
+            mainView
+        }
+    }
+
+    @ViewBuilder
+    private func demoRoot(_ demo: String) -> some View {
+        switch demo {
+        case "agents":   AgentListView()
+        case "settings": SettingsView()
+        case "mode":     ModeMenuView()
+        case "project":  ProjectPickerView()
+        default:         ConversationScreen()
+        }
+    }
+
+    private var mainView: some View {
         NavigationStack {
             ZStack {
                 Color.black.ignoresSafeArea()
