@@ -8,6 +8,27 @@ your actual git repos — from anywhere, with your phone in your pocket.
 > The name comes from the gesture: you send a message with the watch's hardware
 > double-tap (pinch). It's a working codename — rename it freely.
 
+## What it looks like
+
+<table>
+  <tr>
+    <td align="center" width="25%"><img src="docs/screenshots/conversation.png" alt="A live Claude Code conversation on an Apple Watch, showing a tool step and the agent's result" /></td>
+    <td align="center" width="25%"><img src="docs/screenshots/working.png" alt="The agent working, with a live elapsed timer and a stop button" /></td>
+    <td align="center" width="25%"><img src="docs/screenshots/approve-diff.png" alt="Approving a code edit from a colored diff on the wrist, with Allow and Deny" /></td>
+    <td align="center" width="25%"><img src="docs/screenshots/agents.png" alt="The multi-agent switcher running separate Claude sessions across two projects" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Ask</b> — dictate a prompt, read the reply and tool steps</sub></td>
+    <td align="center"><sub><b>Work</b> — live timer; shake your wrist or tap to stop</sub></td>
+    <td align="center"><sub><b>Approve</b> — accept or reject an edit from its diff</sub></td>
+    <td align="center"><sub><b>Switch</b> — drive several agents across repos</sub></td>
+  </tr>
+</table>
+
+Each is a real screen from the watchOS app running in the simulator.
+
+---
+
 This is a **tether**, not a cloud product. The backend runs on *your* Mac,
 against *your* local repos, and a tunnel makes it reachable from the watch. The
 watch is a thin client. Nothing of your code leaves your machine except the
