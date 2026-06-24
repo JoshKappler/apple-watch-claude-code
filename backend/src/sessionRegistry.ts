@@ -19,7 +19,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
-import type { PermissionMode, ServerMsg } from "@pinch/protocol";
+import type { PermissionMode, RenderMode, ServerMsg } from "@pinch/protocol";
 import { config } from "./config.js";
 import { log } from "./log.js";
 import { ApprovalRegistry } from "./approvals.js";
@@ -92,6 +92,8 @@ export interface SessionState {
   model: string;
   /** Active extended-thinking level for this session (defaults to "off"). */
   thinking: ThinkingLevel;
+  /** Render target for replies: "plain" (watch, default) or "rich" (phone). Carried across project swaps. */
+  render: RenderMode;
   /** Monotonic-indexed ring buffer of outbound agent frames (poll + WS replay). */
   eventLog: LoggedEvent[];
   /** Next index to assign. Never reset, even as the ring trims old entries. */
@@ -199,6 +201,10 @@ export function attachAgent(
     autoTitle: config.autoTitle,
     model: state.model,
     thinking: state.thinking,
+    // Carry the session's render mode into the (re)built agent. CRITICAL for select-project: that
+    // path re-attaches the agent, so without this a phone session would silently fall back to the
+    // plain (watch) append after switching projects.
+    render: state.render,
     // Set only on REVIVE: hands the SDK the prior conversation's id so it reloads that
     // transcript from disk and Claude keeps its full context across a backend restart/sweep.
     resume,
@@ -216,6 +222,7 @@ export function attachAgent(
         model: state.model,
         thinking: state.thinking,
         mode: state.mode,
+        render: state.render,
         deviceId: state.deviceId,
         updatedAt: Date.now(),
       });
@@ -264,6 +271,9 @@ export function reviveSession(
     mode: rec.mode,
     model: rec.model,
     thinking: rec.thinking,
+    // Pre-existing records predate render and are all watch sessions → default to "plain". Never
+    // drop a record for lacking it.
+    render: rec.render ?? "plain",
     eventLog: [],
     nextIndex: 0,
     socket: null,
@@ -297,6 +307,8 @@ export function createSession(
     model?: string;
     /** Optional thinking level; falls back to "off". */
     thinking?: ThinkingLevel;
+    /** Optional render target; falls back to "plain" (watch). The watch never sends it. */
+    render?: RenderMode;
   },
 ): SessionState {
   const sessionId = `s_${randomUUID().slice(0, 12)}`;
@@ -310,6 +322,7 @@ export function createSession(
     mode,
     model: opts.model ?? config.model,
     thinking: opts.thinking ?? "off",
+    render: opts.render ?? "plain",
     eventLog: [],
     nextIndex: 0,
     socket: opts.socket,

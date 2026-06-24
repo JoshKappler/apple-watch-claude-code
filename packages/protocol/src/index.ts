@@ -21,6 +21,14 @@ export const PermissionMode = z.enum([
 ]);
 export type PermissionMode = z.infer<typeof PermissionMode>;
 
+/**
+ * Render target for a session. `plain` = the watch (spoken/tiny-screen, no Markdown —
+ * the original and only behavior the watch ever sends, so it's the default everywhere).
+ * `rich` = the iPhone app (renders Markdown/code/diffs). Clients that omit it get `plain`.
+ */
+export const RenderMode = z.enum(["plain", "rich"]);
+export type RenderMode = z.infer<typeof RenderMode>;
+
 export const AgentState = z.enum([
   "idle",
   "thinking",

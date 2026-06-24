@@ -48,7 +48,7 @@ From the repo root:
 
 It checks `node`, creates `backend/.env` from the example (without overwriting an
 existing one), generates a `PINCH_TOKEN`, and creates
-`watch/Sources/Secrets.swift` (gitignored) with the token filled in. Then edit
+`watch/Sources/Shared/Secrets.swift` (gitignored) with the token filled in. Then edit
 `backend/.env` to fill in the rest.
 
 ### 1. Backend env
@@ -157,7 +157,7 @@ xcodegen generate            # reads project.yml → writes Pinch.xcodeproj
 open Pinch.xcodeproj
 ```
 
-Set `watch/Sources/Secrets.swift` (created by `setup.sh`, gitignored — never
+Set `watch/Sources/Shared/Secrets.swift` (created by `setup.sh`, gitignored — never
 commit it):
 
 ```swift

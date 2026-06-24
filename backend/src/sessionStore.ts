@@ -19,7 +19,7 @@
  */
 import { readFileSync, writeFileSync, renameSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import type { PermissionMode } from "@pinch/protocol";
+import type { PermissionMode, RenderMode } from "@pinch/protocol";
 import { log } from "./log.js";
 import type { ThinkingLevel } from "./sessionTypes.js";
 
@@ -34,6 +34,12 @@ export interface PersistedSession {
   model: string;
   thinking: ThinkingLevel;
   mode: PermissionMode;
+  /**
+   * Render target for the revived session ("plain" = watch, "rich" = phone). Optional: records
+   * written before this field existed are all watch sessions, so a missing value reads as "plain"
+   * on revive. Never a reason to drop a record.
+   */
+  render?: RenderMode;
   deviceId: string | undefined;
   updatedAt: number;
 }

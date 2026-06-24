@@ -18,7 +18,11 @@
 
 import Foundation
 import UserNotifications
-import WatchKit
+// Note: this file is shared by the watch and phone targets. It deliberately imports
+// neither WatchKit nor UIKit — the only platform-specific glue (the app-delegate that
+// receives the APNs token) lives in each target's app entry point and calls
+// didRegister(deviceToken:) here. `register()` is a no-op stub on both platforms until a
+// paid Apple team + aps-environment entitlement are in place (see SECURITY/README).
 
 @MainActor
 final class PushRegistration: NSObject, ObservableObject {
@@ -103,16 +107,5 @@ extension PushRegistration: UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             didReceive response: UNNotificationResponse) async {
         await MainActor.run { self.handleIncomingPush() }
-    }
-}
-
-/// Stable per-install device id (kept out of the keychain for simplicity; fine for a token id).
-enum DeviceID {
-    private static let key = "pinch.deviceId"
-    static var current: String {
-        if let existing = UserDefaults.standard.string(forKey: key) { return existing }
-        let id = "watch-" + UUID().uuidString.prefix(8).lowercased()
-        UserDefaults.standard.set(id, forKey: key)
-        return id
     }
 }

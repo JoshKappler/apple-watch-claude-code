@@ -397,6 +397,12 @@ final class WSClient: NSObject, @unchecked Sendable {
 
         var body: [String: Any] = ["deviceId": deviceId, "model": model, "thinking": thinking]
         if let resumeSessionId { body["resumeSessionId"] = resumeSessionId }
+        #if !os(watchOS)
+        // Phone clients render markdown/code/diffs, so they ask the backend for rich output.
+        // The watch omits this field entirely → backend defaults to "plain" → its request is
+        // byte-for-byte identical to before. (Backend: RenderMode in packages/protocol.)
+        body["render"] = "rich"
+        #endif
         guard let bodyData = try? JSONSerialization.data(withJSONObject: body) else {
             emit(.failed("Encode error"))
             return

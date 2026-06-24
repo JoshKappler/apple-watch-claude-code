@@ -89,12 +89,19 @@ else
 fi
 echo
 
-# --- 4. watch pairing secret (gitignored) -----------------------------------
-bold "4. Watch pairing secret (watch/Sources/Secrets.swift)"
+# --- 4. pairing secret (gitignored, shared by watch + phone) ----------------
+bold "4. Pairing secret (watch/Sources/Shared/Secrets.swift)"
 SECRETS_EXAMPLE="$REPO_ROOT/watch/Secrets.example.swift"
-SECRETS_FILE="$REPO_ROOT/watch/Sources/Secrets.swift"
+SECRETS_FILE="$REPO_ROOT/watch/Sources/Shared/Secrets.swift"
+mkdir -p "$(dirname "$SECRETS_FILE")"
+# One-time migration: an older checkout kept Secrets at watch/Sources/Secrets.swift.
+# Move it into Shared/ (where both the watch and phone targets compile it) if present.
+if [[ -f "$REPO_ROOT/watch/Sources/Secrets.swift" && ! -f "$SECRETS_FILE" ]]; then
+  mv "$REPO_ROOT/watch/Sources/Secrets.swift" "$SECRETS_FILE"
+  ok "Migrated existing Secrets.swift into Sources/Shared/."
+fi
 if [[ -f "$SECRETS_FILE" ]]; then
-  ok "watch/Sources/Secrets.swift already exists — leaving it untouched."
+  ok "watch/Sources/Shared/Secrets.swift already exists — leaving it untouched."
 elif [[ -f "$SECRETS_EXAMPLE" ]]; then
   cp "$SECRETS_EXAMPLE" "$SECRETS_FILE"
   # Inject PINCH_TOKEN from .env so the new Secrets.swift is ready to build.
@@ -107,9 +114,9 @@ elif [[ -f "$SECRETS_EXAMPLE" ]]; then
         /static let token =/ { print "    static let token = \"" tok "\""; next }
         { print }
       ' "$SECRETS_FILE" > "$tmp" && mv "$tmp" "$SECRETS_FILE"
-      ok "Created watch/Sources/Secrets.swift (gitignored) with PINCH_TOKEN filled in."
+      ok "Created watch/Sources/Shared/Secrets.swift (gitignored) with PINCH_TOKEN filled in."
     else
-      ok "Created watch/Sources/Secrets.swift (gitignored)."
+      ok "Created watch/Sources/Shared/Secrets.swift (gitignored)."
     fi
   fi
   info "Edit serverURL in it to your tunnel URL (npm run up prints one)."

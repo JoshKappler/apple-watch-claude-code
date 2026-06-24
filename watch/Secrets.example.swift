@@ -1,12 +1,12 @@
 //
 //  Secrets.example.swift
-//  TEMPLATE — copy this to watch/Sources/Secrets.swift and fill in your values.
+//  TEMPLATE — copy this to watch/Sources/Shared/Secrets.swift and fill in your values.
 //
-//  watch/Sources/Secrets.swift is GITIGNORED and must NEVER be committed: the token is
+//  watch/Sources/Shared/Secrets.swift is GITIGNORED and must NEVER be committed: the token is
 //  effectively an RCE password (see infra/SECURITY.md). This file (the template, with
 //  placeholders) is the only one that's checked in.
 //
-//  Fastest path: run ./setup.sh — it creates watch/Sources/Secrets.swift from this file
+//  Fastest path: run ./setup.sh — it creates watch/Sources/Shared/Secrets.swift from this file
 //  and injects the PINCH_TOKEN from backend/.env automatically.
 //
 //  Fields:

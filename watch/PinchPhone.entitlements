@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Intentionally empty so the iPhone app signs with a free/personal Apple team, exactly
+	     like the watch. Push Notifications (aps-environment) is NOT declared yet: real APNs
+	     needs a paid team + an APNs key. The push code (PushRegistration) is wired but its
+	     register() is a no-op stub until then. To enable later: add aps-environment here and
+	     restore the registration body. See README / infra/SECURITY.md. -->
+</dict>
+</plist>

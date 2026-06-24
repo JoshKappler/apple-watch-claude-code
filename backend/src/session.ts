@@ -76,6 +76,26 @@ Do all coding, tool use, and verification exactly as rigorously as you normally 
 One standing work rule, the same in every project: keep git dead simple. Always commit and push to the repository's primary branch on origin, which is normally main. Never create git worktrees, never switch to or create another branch, never change which branch is primary, and never force-push or hard-reset — several agents may share one working tree and must not move it out from under each other. When a task is done and the code builds, commit everything and push it to origin. Only depart from this if the person explicitly tells you to for a specific task.`;
 
 /**
+ * Sibling of WATCH_SYSTEM_APPEND for sessions whose render mode is "rich" (the iPhone app). The
+ * phone renders Markdown/code/diffs and is read with the eyes, not the ear, so the COMMUNICATION
+ * rules flip the other way: format for a phone screen instead of for TTS. The coding work, tools,
+ * and rigor are unchanged — only the shape of the reply changes. Static string → prompt-cached with
+ * the preset, same as the watch append. The LAST paragraph is the SAME standing git rule, copied
+ * verbatim from WATCH_SYSTEM_APPEND, so the two never drift.
+ */
+const PHONE_SYSTEM_APPEND = `You are being driven from an iPhone app. The person types or dictates to you and reads your replies on a phone screen that renders rich text. This changes how you should communicate (not how you do the work):
+
+- Markdown renders here: use fenced code blocks for code, unified diffs for edits, headers and bullet lists for structure, and inline code for identifiers. Format for readability on a phone.
+- Still be concise. Lead with the answer or result, then supporting detail. Show code, diffs, file paths, and commands when they help the person understand or decide — but skip filler and play-by-play narration of every step.
+- When you need steps or choices, a short numbered or bulleted list is fine.
+
+Input may come from voice dictation, so tolerate occasional transcription errors in technical terms (git heard as "get", npm as "MPM", Claude as "cloud", split or misspelled file/function names). Read for intent and infer the obvious technical meaning from context.
+
+Do all coding, tool use, and verification exactly as rigorously as you normally would; only the formatting of what you say back to the person changes.
+
+One standing work rule, the same in every project: keep git dead simple. Always commit and push to the repository's primary branch on origin, which is normally main. Never create git worktrees, never switch to or create another branch, never change which branch is primary, and never force-push or hard-reset — several agents may share one working tree and must not move it out from under each other. When a task is done and the code builds, commit everything and push it to origin. Only depart from this if the person explicitly tells you to for a specific task.`;
+
+/**
  * Async generator you can push into. Resolves the seeded prompt first, then any
  * follow-up turns. Ends only when `close()` is called.
  */
@@ -286,14 +306,18 @@ export class ClaudeSession implements AgentSession {
   }
 
   /**
-   * The system-prompt append for this session: the static watch-orientation block, plus a soft
-   * focus line when a folder hint is set. The agent's cwd is always the project root, so the hint
-   * only STEERS it toward one subfolder; it keeps full access to everything under the root.
+   * The system-prompt append for this session: the static orientation block for the session's
+   * render mode (watch = plain/spoken, phone = rich/Markdown), plus a soft focus line when a folder
+   * hint is set. The agent's cwd is always the project root, so the hint only STEERS it toward one
+   * subfolder; it keeps full access to everything under the root. Render defaults to plain (the
+   * watch), so a session that never sets render is byte-for-byte the original watch behavior.
    */
   private systemAppend(): string {
+    const base =
+      this.deps.render === "rich" ? PHONE_SYSTEM_APPEND : WATCH_SYSTEM_APPEND;
     const hint = this.deps.folderHint;
-    if (!hint) return WATCH_SYSTEM_APPEND;
-    return `${WATCH_SYSTEM_APPEND}
+    if (!hint) return base;
+    return `${base}
 
 The person has set your focus to the "${hint}" directory inside the project root. Work primarily there — cd into it for commands and prefer files under it — unless a task clearly needs something elsewhere under the root. You still have full access to the whole root.`;
   }

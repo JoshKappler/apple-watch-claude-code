@@ -230,6 +230,10 @@ async function handleSession(
     return;
   }
 
+  // Optional render mode. Parsed defensively (NOT 400-strict) so any client that omits it — the
+  // watch always does — defaults to "plain" and is unchanged. Only the phone ever sends "rich".
+  const render = body.render === "rich" ? "rich" : "plain";
+
   // Resume order: first try the live in-memory session; if it's gone (backend restarted or the
   // idle sweep retired it), try to REVIVE it from the durable record so Claude keeps its context.
   let existing = resumableSession(resumeSessionId, deviceId);
@@ -250,6 +254,13 @@ async function handleSession(
         model: cfg.data.model,
         thinking: cfg.data.thinking,
       });
+    }
+    // Apply render ONLY when the client explicitly sent it (the phone). Absent => leave the live
+    // session's render untouched — never downgrade a revived phone session to plain just because a
+    // poll/resume omitted the field. (render takes effect on the next turn's system append, since the
+    // append is read at query construction; there's no live setter for it.)
+    if (body.render === "plain" || body.render === "rich") {
+      existing.render = body.render;
     }
     if (revived) {
       // Drop a breadcrumb the watch can show. Index starts at 0 in the fresh log, which is
@@ -288,6 +299,7 @@ async function handleSession(
     http: true,
     model: cfg.data.model,
     thinking: cfg.data.thinking,
+    render,
   });
   sendJson(res, 200, {
     sessionId: state.sessionId,

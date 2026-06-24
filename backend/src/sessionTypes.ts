@@ -9,6 +9,7 @@
 import type {
   PermissionMode,
   PermissionKind,
+  RenderMode,
   Risk,
   ServerMsg,
 } from "@pinch/protocol";
@@ -88,6 +89,13 @@ export interface SessionDeps {
   model: string;
   /** Extended-thinking level for the first turn (default "off" when omitted). */
   thinking?: ThinkingLevel;
+  /**
+   * Render target driving how the agent FORMATS its replies: "plain" (watch — spoken / tiny
+   * screen, no Markdown) or "rich" (iPhone — Markdown/code/diffs). Omitted => "plain", so the
+   * watch (which never sends it) is byte-for-byte unchanged. Only affects the system-prompt
+   * append; the actual coding work is identical.
+   */
+  render?: RenderMode;
   /** Anthropic session id to resume, if reconnecting. */
   resume?: string;
   initialMode: PermissionMode;
