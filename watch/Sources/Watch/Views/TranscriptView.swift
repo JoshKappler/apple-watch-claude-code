@@ -3,18 +3,16 @@
 //  Scrollable conversation: user prompts, assistant text (with a speaking pulse),
 //  tool chips, and a subtle thinking indicator.
 //
-//  SCROLLING IS CROWN-ONLY — the FINGER never scrolls the chat. The ScrollView is
-//  `.scrollDisabled(true)` and we drive it from the Digital Crown ourselves (a
-//  `.digitalCrownRotation` binding → the watchOS-11 `ScrollPosition` API). Why: the finger is
-//  reserved for the VERTICAL SWIPE that collapses/expands the bottom chrome (see the gesture
-//  below), and a touch-scrolling ScrollView's UIKit pan recognizer would otherwise swallow that
-//  swipe (~half the time — the bug behind several failed attempts). Disabling touch scroll frees
-//  the finger for the swipe; the crown keeps scrolling.
+//  SCROLLING IS NATIVE — the finger AND the Digital Crown scroll the chat the normal watchOS
+//  way, which means we get Apple's own crown detent haptic for free. We tried driving the crown
+//  ourselves (programmatic scroll + a hand-rolled tick) to free the finger for a collapse-chrome
+//  swipe, but the custom haptic never beat the system's, so we dropped it: native scroll, native
+//  feel. The composer's own button still collapses the chrome to fill the screen.
 //
 //  FOLLOW-THE-BOTTOM: by default the feed tracks the newest content so the latest activity stays
-//  in view. Crowning UP away from the floor BREAKS AWAY (read backscroll while the agent keeps
-//  working — nothing yanks you down); crowning back to the floor RE-ENGAGES following. Decided
-//  from the crown offset + live scroll geometry, never from screen swipes.
+//  in view. Scrolling UP breaks away (read backscroll while the agent keeps working — nothing
+//  yanks you down); scrolling back to the bottom re-engages following. Decided from live scroll
+//  geometry (`.onScrollGeometryChange`), never from screen swipes.
 //
 
 import SwiftUI
@@ -30,53 +28,13 @@ struct TranscriptView: View {
     /// band so you don't have to land on the exact last pixel to re-engage following.
     private let bottomBand: CGFloat = 24
 
-    // ── CROWN-ONLY SCROLL (no finger scroll) ────────────────────────────────────────────────
-    // The ScrollView is `.scrollDisabled(true)`, so the FINGER never scrolls — the crown does it,
-    // through these. We OWN crown focus explicitly (focusable + .focused): the old version relied
-    // on being the IMPLICIT default crown target, so after the composer or system dictation took
-    // crown focus and dropped it, nothing reclaimed it and the crown went DEAD until you tapped
-    // (the "scrolling froze" bug). Now we re-assert focus on appear and the moment the composer
-    // hands the crown back. Scrolling itself is programmatic via watchOS-11 `ScrollPosition`:
-    // `.scrollDisabled` blocks USER scrolling but `scrollTo` still moves the view.
+    // ── NATIVE SCROLL ──────────────────────────────────────────────────────────────────────
+    // The chat scrolls NATIVELY — finger and crown both, with Apple's own detent haptic. No custom
+    // crown handling: we don't beat Apple's scroll feel, so we use it directly. We only hold crown
+    // focus explicitly so it never goes dead after the composer or system dictation borrows it (the
+    // old "scrolling froze" bug), and drive `scrollPosition` for follow-to-bottom.
     @FocusState private var crownFocused: Bool
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
-
-    // ── CROWN ROTATION → HAPTIC + SCROLL, FULLY DECOUPLED ──────────────────────────────────
-    // The haptic must feel like a real notched crown: ONE tick per fixed amount of ROTATION, with
-    // nothing to do with whether the content can scroll — so it clicks at the top, at the bottom,
-    // and on a transcript too short to scroll at all. The old version keyed the tick off the CLAMPED
-    // scroll offset, so the clicks died at the scroll limits and on short content ("based on the
-    // screen, not the crown"). Now we read the crown's raw rotation DELTAS and (a) tick every
-    // `crownDetentUnits` of rotation — content-independent — and (b) integrate that same delta into a
-    // SEPARATE clamped scroll offset for the actual scroll.
-    /// Raw accumulated crown rotation, bound over a huge FIXED range (not the content size) so the
-    /// crown always has throw and rotation is never clamped away by a short transcript. We only ever
-    /// use its DELTAS, so the absolute value and range don't matter.
-    @State private var crownValue: Double = 0
-    /// Our scroll offset (points), integrated from crown deltas and clamped to the content. This is
-    /// what actually scrolls — decoupled from `crownValue` so hitting a limit stops the scroll without
-    /// stopping the rotation haptic, and so there's no phantom "slack" to unwind when you reverse.
-    @State private var scrollY: Double = 0
-    /// |rotation| accumulated since the last detent tick. Crossing `crownDetentUnits` fires one tick.
-    @State private var hapticAccum: Double = 0
-    /// Points of scroll per crown unit — the scroll-SPEED knob (bigger = faster), tuned on-device.
-    private let crownPointsPerUnit: Double = 6.5
-    /// Crown rotation between haptic notches — the CLICK CADENCE, in crown units, independent of
-    /// scroll speed. ≈ the old 0.38pt ÷ 6.5 effective step, so a deliberate turn ticks densely.
-    private let crownDetentUnits: Double = 0.06
-    /// Minimum wall-clock time between ticks. The Digital Crown COASTS on inertia after you let go;
-    /// without a rate cap the coast keeps crossing detents and machine-guns. Capping the RATE turns
-    /// the coast into discrete detents that taper and stop — so the haptic tracks how you're TURNING
-    /// the crown, not how far it drifts. 0.05s (~20/s) is the ceiling that still feels DISCRETE.
-    private let crownTickMinInterval: TimeInterval = 0.05
-    /// Wall-clock time of the last tick actually played — the throttle anchor.
-    @State private var lastTickAt: Date = .distantPast
-    /// Measured directly with `.onGeometryChange` (NOT `.onScrollGeometryChange`, which can go
-    /// quiet under `.scrollDisabled`). Plain geometry always fires, so `maxScroll` is reliable.
-    @State private var contentHeight: CGFloat = 0
-    @State private var viewportHeight: CGFloat = 0
-    /// Max scrollable offset = content − viewport (clamped ≥ 0). The scroll clamp, in points.
-    private var maxScroll: CGFloat { max(contentHeight - viewportHeight, 0) }
 
     /// The agent is actively working — drives the rich thinking indicator (client-side).
     private var isWorking: Bool {
@@ -107,104 +65,45 @@ struct TranscriptView: View {
             .padding(.horizontal, 6)
             .padding(.top, 4)
             .padding(.bottom, 6)
-            // Content height — the scrollable extent. Plain geometry, so it reports even though the
-            // ScrollView is scrollDisabled.
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
-                contentHeight = h
-                pinToFloorIfFollowing()
+            // Keep the feed pinned to the newest content while following. Catches growth that the
+            // transcript COUNT misses — streamed text expanding within an existing bubble, the
+            // thinking indicator — by reacting to the content's height changing.
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { _ in
+                if following { scrollPosition.scrollTo(edge: .bottom) }
             }
         }
-        // Viewport height — the ScrollView's own frame.
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
-            viewportHeight = h
-            pinToFloorIfFollowing()
-        }
-        // Programmatic scroll target (watchOS 11). Moved by the crown handler + follow logic only.
+        // NATIVE scroll: finger + crown both scroll with Apple's own detent haptic — no custom crown
+        // handling at all. `scrollPosition` is here only for programmatic follow-to-bottom.
         .scrollPosition($scrollPosition)
-        // The finger CANNOT scroll the chat — that's what makes the collapse/expand swipe (below)
-        // reliable, and is the intended interaction. The crown scrolls instead (see below).
-        .scrollDisabled(true)
-        // Own the crown explicitly so it never goes dead after the composer borrows it.
+        // Hold crown focus so native crown scrolling never goes dead after the composer or system
+        // dictation borrows it (the old "scrolling froze" bug); reclaimed on the events below.
         .focusable(true)
         .focused($crownFocused)
-        // Bound over a huge FIXED range so the crown always has throw regardless of content, and
-        // continuous (`by: nil`) so scrolling glides. System crown haptic OFF — we play our OWN
-        // rotation-based tick in the handler. Only DELTAS of `crownValue` are used, never its abs value.
-        .digitalCrownRotation($crownValue, from: -1_000_000, through: 1_000_000,
-                              by: nil, sensitivity: .medium, isContinuous: false,
-                              isHapticFeedbackEnabled: false)
-        // Crown turned. Haptic = PURE ROTATION (a notch every `crownDetentUnits`, rate-capped so the
-        // inertial coast collapses into discrete detents instead of a buzz). Scroll = that SAME delta
-        // integrated into `scrollY` and clamped to the content. The two are independent: at the top or
-        // bottom the view stops but the crown keeps clicking. Landing within the bottom band re-engages
-        // following (and snaps to the floor); anywhere above breaks away to read backscroll.
-        .onChange(of: crownValue) { oldValue, newValue in
-            let du = newValue - oldValue
-            if du == 0 { return }
-
-            // Rotation haptic — content-independent. One tick per `crownDetentUnits` of rotation; the
-            // rate cap turns a fast spin / inertial coast into discrete detents rather than a buzz.
-            hapticAccum += abs(du)
-            if hapticAccum >= crownDetentUnits {
-                hapticAccum = hapticAccum.truncatingRemainder(dividingBy: crownDetentUnits)
-                let now = Date()
-                if now.timeIntervalSince(lastTickAt) >= crownTickMinInterval {
-                    Haptics.scrollTick()
-                    lastTickAt = now
-                }
-            }
-
-            // Scroll — integrate the delta, clamp to content. Clamping `scrollY` (not the crown value)
-            // means reversing direction scrolls immediately, with no phantom slack to unwind first.
-            let newY = min(max(scrollY + du * crownPointsPerUnit, 0), Double(maxScroll))
-            scrollY = newY
-            let atBottom = newY >= Double(maxScroll) - bottomBand
-            following = atBottom
-            if atBottom { scrollPosition.scrollTo(edge: .bottom) }
-            else { scrollPosition.scrollTo(y: newY) }
+        // Follow detection from live scroll geometry (now that the view scrolls natively, this fires).
+        // At/near the bottom → keep following; scroll up to break away and read backscroll while the
+        // agent works; scroll back down to re-engage. Programmatic scrollTo(.bottom) also lands here,
+        // so following stays true through streaming.
+        .onScrollGeometryChange(for: Bool.self) { geo in
+            geo.contentOffset.y >= geo.contentSize.height - geo.containerSize.height - bottomBand
+        } action: { _, nearBottom in
+            following = nearBottom
         }
         // New items. A locally-sent USER prompt is an explicit "take me to the bottom" — re-engage
-        // following even if we'd crowned up to read. Agent-driven growth respects the follow state.
+        // following even if we'd scrolled up to read. Agent-driven growth respects the follow state.
         .onChange(of: store.transcript.count) { old, new in
-            // Reclaim the crown on every new bubble. This is the exact moment the crown used to go
-            // dead (send → reply), e.g. after the system dictation sheet dismissed without handing
-            // focus back. Harmless when we already hold it. Safe to force here: while the composer
-            // is expanded (it owns the crown) this view isn't mounted, so it can't steal focus.
-            crownFocused = true
+            crownFocused = true   // reclaim the crown on every new bubble (send → reply handoff)
             if new > old, let last = store.transcript.last, case .user = last {
                 following = true
             }
-            if following {
-                scrollY = Double(maxScroll)
-                scrollPosition.scrollTo(edge: .bottom)
-            }
+            if following { scrollPosition.scrollTo(edge: .bottom) }
         }
         .onChange(of: isWorking) { _, active in
             if active && following { scrollPosition.scrollTo(edge: .bottom) }
         }
         // Reclaim the crown the instant the composer hands it back (collapse from expanded/edit).
-        // The transcript also re-mounts in that case, but this covers the in-place handoff too.
         .onChange(of: store.inputOwnsCrown) { _, owns in
             if !owns { crownFocused = true }
         }
-        // ── Collapse / expand the bottom chrome with a VERTICAL FINGER SWIPE ──────────────────
-        // Reliable ONLY because the ScrollView is scrollDisabled — no scroll pan competes for the
-        // drag (the reason every previous over-the-transcript swipe attempt failed). Swipe DOWN
-        // hides the composer (chat fills the screen); swipe UP brings it back. The horizontal guard
-        // keeps it clear of the system back-swipe; minimumDistance avoids firing on taps so the
-        // reconnect pill etc. stay tappable.
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 18)
-                .onEnded { value in
-                    let dy = value.translation.height, dx = value.translation.width
-                    guard abs(dy) > abs(dx), abs(dy) > 18 else { return }
-                    let collapse = dy > 0
-                    if store.chromeCollapsed != collapse {
-                        store.chromeCollapsed = collapse
-                        Haptics.click()
-                    }
-                }
-        )
         // Snap to the tail on (re)mount and take the crown. Sending from the EXPANDED composer
         // collapses the input (inputOwnsCrown → false), which RE-INSERTS this view with the just-
         // sent bubble already present, so we must re-pin here. Deferred one runloop so the (non-
@@ -214,15 +113,6 @@ struct TranscriptView: View {
             crownFocused = true
             DispatchQueue.main.async { scrollPosition.scrollTo(edge: .bottom) }
         }
-    }
-
-    /// When the content or viewport grows while following (a streamed delta, a new tool chip, the
-    /// thinking indicator), keep the crown pinned to the floor and scroll to the bottom. While
-    /// broken away (the user crowned up to read), this no-ops so the feed never fights them.
-    private func pinToFloorIfFollowing() {
-        guard following else { return }
-        scrollY = Double(maxScroll)
-        scrollPosition.scrollTo(edge: .bottom)
     }
 
     @ViewBuilder

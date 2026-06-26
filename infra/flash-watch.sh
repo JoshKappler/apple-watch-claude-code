@@ -65,8 +65,20 @@ if [ "$CLEAN" = "1" ]; then
   DEVELOPER_DIR="$XC" xcrun devicectl device uninstall app --device "$CTLID" "$BUNDLE" || true
 fi
 
+# Pre-warm the developer tunnel. The watch's tunnel often drops between commands, and the FIRST
+# install after a gap fails with "Connection invalid" / "Timed out establishing tunnel". A cheap
+# `device info` call forces the tunnel up first; the install then reuses it. Retry the pair a few
+# times since the watch link is flaky when it's been idle/asleep.
 echo "▶ Installing → device $CTLID"
-DEVELOPER_DIR="$XC" xcrun devicectl device install app --device "$CTLID" "$APP"
+installed=0
+for attempt in 1 2 3 4; do
+  DEVELOPER_DIR="$XC" xcrun devicectl device info details --device "$CTLID" >/dev/null 2>&1 || true
+  if DEVELOPER_DIR="$XC" xcrun devicectl device install app --device "$CTLID" "$APP" 2>&1 | grep -q 'App installed'; then
+    installed=1; break
+  fi
+  echo "   install attempt $attempt failed (tunnel drop) — re-warming and retrying…"
+done
+[ "$installed" = "1" ] || { echo "✗ install failed after retries — make sure the watch is unlocked, awake, and near the Mac (charger helps), then re-run."; exit 1; }
 
 echo
 echo "✅ Flashed $SCHEME. Now open Settings → Build on the device. It MUST read:"
