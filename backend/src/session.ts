@@ -183,9 +183,9 @@ export class ClaudeSession implements AgentSession {
   /**
    * Last MAIN-THREAD occupancy (NUMERATOR) we emitted for the usage ring, cached so a reconnect can
    * repaint the ring (resendContext) instead of leaving a cold-launched watch empty until the next
-   * turn. The DENOMINATOR stays the static `contextWindowFor` value (the CLI-matched 200k) on
-   * purpose — that scale is already validated; the long-standing inaccuracy was the numerator
-   * reading subagent/mid-tool frames, not the window.
+   * turn. The DENOMINATOR is the model's real context window (`contextWindowFor` — 1M for the
+   * frontier models, 200k for Haiku); an earlier flat-200k denominator made the ring fill ~5x too
+   * fast on the 1M-window default model.
    */
   private lastContextUsed = 0;
 
@@ -708,27 +708,20 @@ The person has set your focus to the "${hint}" directory inside the project root
 }
 
 /**
- * Context-window size (tokens) for a model id, used to scale the watch's usage ring —
- * matched to what the Claude Code CLI meters against, NOT the model's raw API maximum.
+ * Context-window size (tokens) for a model id, used to scale the watch's usage ring.
  *
- * Opus 4.8 / Sonnet 4.6 / Fable 5 advertise a 1M context window over the API, but that
- * 1M is an opt-in beta. The Agent SDK session we drive here never sends the 1M-context
- * beta header, so the model's effective window is the standard 200k — the same number the
- * Claude Code CLI shows on its context meter and auto-compacts against. Scaling the ring to
- * 1M made it read ~5x too empty (a real ~250k turn showed as 25% instead of "full, compact
- * now"). Haiku 4.5 is natively a 200k model, so it lands here too.
+ * On Opus 4.6/4.7/4.8, Sonnet 4.6, and Fable 5 the 1M context window is the DEFAULT — no
+ * beta header is required (that opt-in only applied to the older 2025 models). The Agent SDK
+ * session we drive runs at that real window: turns here routinely exceed 200k tokens without
+ * the API erroring, which a 200k-window model could never accept — proof the window is 1M.
+ * An earlier version hardcoded 200k for every model (misreading a ~250k turn that showed as
+ * 25% as "too empty"); that made the ring fill ~5x too fast. Scale to the model's real
+ * window instead. Haiku 4.5 is natively a 200k model and is the one exception.
  */
 function contextWindowFor(model: string): number {
-  switch (model) {
-    case "claude-haiku-4-5-20251001":
-    case "claude-opus-4-8":
-    case "claude-sonnet-4-6":
-    case "claude-fable-5":
-      return 200_000;
-    default:
-      // Unknown/future model: assume the standard 200k window the CLI uses by default.
-      return 200_000;
-  }
+  // Haiku is the only 200k model we expose; everything else (Opus 4.6+/Sonnet 4.6/Fable 5,
+  // and any future frontier model) defaults to 1M.
+  return model.includes("haiku") ? 200_000 : 1_000_000;
 }
 
 /** Best-effort one-line summary of a tool_result content payload. */

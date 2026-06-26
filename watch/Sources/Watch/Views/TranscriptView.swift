@@ -40,46 +40,43 @@ struct TranscriptView: View {
     // `.scrollDisabled` blocks USER scrolling but `scrollTo` still moves the view.
     @FocusState private var crownFocused: Bool
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
-    /// Digital-Crown value in our OWN units (not points). watchOS only exposes three coarse
-    /// sensitivity presets and native pace falls between two of them (`.medium` scrolled extremely
-    /// slowly, `.high` far too fast), so instead of leaning on a preset we bind the crown in units
-    /// and scale to points by `crownPointsPerUnit` — making speed a real, dial-able number.
-    @State private var crownUnits: Double = 0
-    /// Points of scroll per crown unit — the SINGLE speed knob. Bigger = faster. Dialed by feel on
-    /// the real watch: 1.6 was much too slow, 5.0 landed about native, and 6.5 is a touch quicker
-    /// than native (what the feed wants). (Speed only; the click cadence is independent — see
-    /// `crownHapticStep`.)
+
+    // ── CROWN ROTATION → HAPTIC + SCROLL, FULLY DECOUPLED ──────────────────────────────────
+    // The haptic must feel like a real notched crown: ONE tick per fixed amount of ROTATION, with
+    // nothing to do with whether the content can scroll — so it clicks at the top, at the bottom,
+    // and on a transcript too short to scroll at all. The old version keyed the tick off the CLAMPED
+    // scroll offset, so the clicks died at the scroll limits and on short content ("based on the
+    // screen, not the crown"). Now we read the crown's raw rotation DELTAS and (a) tick every
+    // `crownDetentUnits` of rotation — content-independent — and (b) integrate that same delta into a
+    // SEPARATE clamped scroll offset for the actual scroll.
+    /// Raw accumulated crown rotation, bound over a huge FIXED range (not the content size) so the
+    /// crown always has throw and rotation is never clamped away by a short transcript. We only ever
+    /// use its DELTAS, so the absolute value and range don't matter.
+    @State private var crownValue: Double = 0
+    /// Our scroll offset (points), integrated from crown deltas and clamped to the content. This is
+    /// what actually scrolls — decoupled from `crownValue` so hitting a limit stops the scroll without
+    /// stopping the rotation haptic, and so there's no phantom "slack" to unwind when you reverse.
+    @State private var scrollY: Double = 0
+    /// |rotation| accumulated since the last detent tick. Crossing `crownDetentUnits` fires one tick.
+    @State private var hapticAccum: Double = 0
+    /// Points of scroll per crown unit — the scroll-SPEED knob (bigger = faster), tuned on-device.
     private let crownPointsPerUnit: Double = 6.5
-    /// Points of scroll between haptic ticks — the crown's "click" cadence. A MANUAL tick, decoupled
-    /// from scroll speed. Kept small (0.38) so a deliberate turn ticks densely — the "lots of clicks,
-    /// very haptic dial" feel. The machine-gun a tiny step would cause on a fast spin is bounded by
-    /// `crownTickMinInterval` instead (see the handler), not by widening this. Each tick is
-    /// `Haptics.scrollTick()` — a crisp SILENT `.start` tap (no alert tone).
-    private let crownHapticStep: Double = 0.38
-    /// Minimum wall-clock time between scroll ticks. The real fix for "it keeps clicking when I'm not
-    /// turning": the Digital Crown COASTS on inertia after you let go, so `crownUnits` keeps changing
-    /// with no hand on it and the per-distance tick would keep firing — tracking the scroll, not the
-    /// rotation. Capping the RATE turns that coast into discrete detents that taper as it slows and
-    /// stop when it stops. 0.05s (~20 ticks/s) is the ceiling for taps that still feel DISCRETE —
-    /// faster (e.g. 0.03/33-per-sec) smears even a silent tap into one continuous buzz, not ticks.
+    /// Crown rotation between haptic notches — the CLICK CADENCE, in crown units, independent of
+    /// scroll speed. ≈ the old 0.38pt ÷ 6.5 effective step, so a deliberate turn ticks densely.
+    private let crownDetentUnits: Double = 0.06
+    /// Minimum wall-clock time between ticks. The Digital Crown COASTS on inertia after you let go;
+    /// without a rate cap the coast keeps crossing detents and machine-guns. Capping the RATE turns
+    /// the coast into discrete detents that taper and stop — so the haptic tracks how you're TURNING
+    /// the crown, not how far it drifts. 0.05s (~20/s) is the ceiling that still feels DISCRETE.
     private let crownTickMinInterval: TimeInterval = 0.05
-    /// Wall-clock time of the last tick actually played — the throttle anchor for `crownTickMinInterval`.
+    /// Wall-clock time of the last tick actually played — the throttle anchor.
     @State private var lastTickAt: Date = .distantPast
-    /// True only while we're writing the crown value ourselves (auto-follow pinning to the floor), so
-    /// a streaming reply that keeps snapping to the bottom never machine-guns clicks — only physical
-    /// rotation ticks.
-    @State private var crownWriteIsProgrammatic = false
-    /// Scroll offset (points) at which we last played a tick; manual-haptic anchor.
-    @State private var lastHapticY: Double = 0
     /// Measured directly with `.onGeometryChange` (NOT `.onScrollGeometryChange`, which can go
-    /// quiet under `.scrollDisabled`). Plain geometry always fires, so `maxScroll` is reliable —
-    /// without it the crown's upper bound would be 0 and the crown couldn't scroll at all.
+    /// quiet under `.scrollDisabled`). Plain geometry always fires, so `maxScroll` is reliable.
     @State private var contentHeight: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
-    /// Max scrollable offset = content − viewport (clamped ≥ 0). The crown's upper bound, in points.
+    /// Max scrollable offset = content − viewport (clamped ≥ 0). The scroll clamp, in points.
     private var maxScroll: CGFloat { max(contentHeight - viewportHeight, 0) }
-    /// The crown's upper bound in UNITS (points ÷ pointsPerUnit) — the range we bind the crown over.
-    private var maxUnits: Double { Double(maxScroll) / crownPointsPerUnit }
 
     /// The agent is actively working — drives the rich thinking indicator (client-side).
     private var isWorking: Bool {
@@ -130,48 +127,41 @@ struct TranscriptView: View {
         // Own the crown explicitly so it never goes dead after the composer borrows it.
         .focusable(true)
         .focused($crownFocused)
-        // SMOOTH, NATIVE-PACED, with a SUBTLE manual click. Continuous (`by: nil`) so the chat glides
-        // like the built-in ScrollView instead of jumping in chunks. The system crown haptic is OFF
-        // (`isHapticFeedbackEnabled: false`) — at our unit scale it would fire per integer-unit and
-        // buzz; we play our OWN tick in the handler instead, every `crownHapticStep` points, so the
-        // click cadence is independent of speed. Speed itself comes from `crownPointsPerUnit`, not the
-        // sensitivity preset, so it can sit between `.medium` (too slow) and `.high` (too fast).
-        .digitalCrownRotation($crownUnits, from: 0, through: max(maxUnits, 1),
+        // Bound over a huge FIXED range so the crown always has throw regardless of content, and
+        // continuous (`by: nil`) so scrolling glides. System crown haptic OFF — we play our OWN
+        // rotation-based tick in the handler. Only DELTAS of `crownValue` are used, never its abs value.
+        .digitalCrownRotation($crownValue, from: -1_000_000, through: 1_000_000,
                               by: nil, sensitivity: .medium, isContinuous: false,
                               isHapticFeedbackEnabled: false)
-        // Crown turned: scale units → points and scroll there. Landing within the bottom band
-        // re-engages following (and snaps exactly to the floor); anywhere above breaks away so you can
-        // read backscroll while the agent keeps working. A manual tick fires every crownHapticStep
-        // points of PHYSICAL scroll (programmatic auto-follow writes are skipped so streaming is silent).
-        .onChange(of: crownUnits) { _, u in
-            let y = min(u * crownPointsPerUnit, Double(maxScroll))
-            // A PROGRAMMATIC write (auto-follow pinning to the floor) must NEVER touch `following`
-            // or tick — only PHYSICAL rotation decides whether we're following. This matters most
-            // during a bulk history reload on reopen: `maxScroll` balloons as rows stream in, so by
-            // the time this handler runs the pinned crown value is below the new floor and `atBottom`
-            // would read false — flipping `following` off and stranding the feed at the TOP. The
-            // caller already did the scroll (pinToFloorIfFollowing), so just resync and bail.
-            if crownWriteIsProgrammatic {
-                crownWriteIsProgrammatic = false
-                lastHapticY = y                      // resync anchor, no tick
-                return
-            }
-            let atBottom = y >= Double(maxScroll) - bottomBand
-            following = atBottom
-            if atBottom { scrollPosition.scrollTo(edge: .bottom) }
-            else { scrollPosition.scrollTo(y: y) }
-            if abs(y - lastHapticY) >= crownHapticStep {
-                lastHapticY = y                      // advance the distance anchor every step…
-                // …but only PLAY a tick if enough time has passed. A slow turn crosses a step every
-                // so often → dense ticks; a fast spin or the inertial coast crosses many per second →
-                // the rate cap collapses them into discrete detents, so the haptic tracks how you're
-                // turning the crown, not how far the view is sliding.
+        // Crown turned. Haptic = PURE ROTATION (a notch every `crownDetentUnits`, rate-capped so the
+        // inertial coast collapses into discrete detents instead of a buzz). Scroll = that SAME delta
+        // integrated into `scrollY` and clamped to the content. The two are independent: at the top or
+        // bottom the view stops but the crown keeps clicking. Landing within the bottom band re-engages
+        // following (and snaps to the floor); anywhere above breaks away to read backscroll.
+        .onChange(of: crownValue) { oldValue, newValue in
+            let du = newValue - oldValue
+            if du == 0 { return }
+
+            // Rotation haptic — content-independent. One tick per `crownDetentUnits` of rotation; the
+            // rate cap turns a fast spin / inertial coast into discrete detents rather than a buzz.
+            hapticAccum += abs(du)
+            if hapticAccum >= crownDetentUnits {
+                hapticAccum = hapticAccum.truncatingRemainder(dividingBy: crownDetentUnits)
                 let now = Date()
                 if now.timeIntervalSince(lastTickAt) >= crownTickMinInterval {
                     Haptics.scrollTick()
                     lastTickAt = now
                 }
             }
+
+            // Scroll — integrate the delta, clamp to content. Clamping `scrollY` (not the crown value)
+            // means reversing direction scrolls immediately, with no phantom slack to unwind first.
+            let newY = min(max(scrollY + du * crownPointsPerUnit, 0), Double(maxScroll))
+            scrollY = newY
+            let atBottom = newY >= Double(maxScroll) - bottomBand
+            following = atBottom
+            if atBottom { scrollPosition.scrollTo(edge: .bottom) }
+            else { scrollPosition.scrollTo(y: newY) }
         }
         // New items. A locally-sent USER prompt is an explicit "take me to the bottom" — re-engage
         // following even if we'd crowned up to read. Agent-driven growth respects the follow state.
@@ -185,7 +175,7 @@ struct TranscriptView: View {
                 following = true
             }
             if following {
-                pinCrownToFloor()
+                scrollY = Double(maxScroll)
                 scrollPosition.scrollTo(edge: .bottom)
             }
         }
@@ -231,20 +221,8 @@ struct TranscriptView: View {
     /// broken away (the user crowned up to read), this no-ops so the feed never fights them.
     private func pinToFloorIfFollowing() {
         guard following else { return }
-        pinCrownToFloor()
+        scrollY = Double(maxScroll)
         scrollPosition.scrollTo(edge: .bottom)
-    }
-
-    /// Move the crown value to the floor WITHOUT clicking. Flags the write as programmatic so the
-    /// crown handler skips the haptic, and resyncs the haptic anchor to the floor so resuming a
-    /// physical scroll-up ticks from the right place. Guarded so a no-op write can't strand the flag.
-    private func pinCrownToFloor() {
-        let floor = maxUnits
-        if crownUnits != floor {
-            crownWriteIsProgrammatic = true
-            crownUnits = floor
-        }
-        lastHapticY = Double(maxScroll)
     }
 
     @ViewBuilder

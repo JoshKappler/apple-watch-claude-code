@@ -21,12 +21,12 @@ import {
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /**
- * Mirror of session.ts `contextWindowFor`: the effective context window the CLI meters
- * against — a flat 200k for every current model (the 1M window is an opt-in beta the
- * session never enables), so the mock's usage ring reads at the same scale as the real one.
+ * Mirror of session.ts `contextWindowFor`: 1M for every model we drive (Opus 4.6+/Sonnet
+ * 4.6/Fable 5 default to a 1M window, no beta header), 200k only for Haiku — so the mock's
+ * usage ring reads at the same scale as the real one.
  */
-function mockContextWindowFor(_model: string): number {
-  return 200_000;
+function mockContextWindowFor(model: string): number {
+  return model.includes("haiku") ? 200_000 : 1_000_000;
 }
 
 const SAMPLE_DIFF = renderDiff(
