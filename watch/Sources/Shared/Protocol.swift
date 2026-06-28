@@ -196,12 +196,14 @@ enum ServerMsg: Sendable {
         let resumed: Bool
     }
 
-    struct ToolUse: Identifiable, Sendable {
+    struct ToolUse: Identifiable, Sendable, Codable {
         let id: String
         let name: String
         let title: String
         let subtitle: String?
         // We deliberately do NOT decode `input` (z.unknown) — it's free-form and unused on the watch.
+        // Codable so a `.tool` transcript item can be persisted/restored for feed history; the
+        // ServerMsg wire decoder still builds these via the memberwise init, unaffected.
     }
 
     struct ToolResult: Identifiable, Sendable {

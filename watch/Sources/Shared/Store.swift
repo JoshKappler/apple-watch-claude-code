@@ -84,11 +84,13 @@ typealias Store = PinchStore
 // MARK: - Transcript model
 
 /// One renderable item in the scrolling transcript.
-enum TranscriptItem: Identifiable {
+/// Codable so the focused agent's feed can be saved to disk and restored on relaunch/reconnect
+/// (so a still-running session shows its prior messages instead of an empty screen).
+enum TranscriptItem: Identifiable, Codable {
     /// Delivery state of a user prompt, shown so a message is never SILENTLY lost: it reads
     /// "sending" until the backend confirms its POST (2xx), then "sent". `failed` is a terminal
     /// failure (e.g. auth). Drives the small status glyph on the user bubble.
-    enum Delivery: Sendable { case sending, sent, failed }
+    enum Delivery: String, Sendable, Codable { case sending, sent, failed }
 
     case user(id: UUID = UUID(), text: String, delivery: Delivery = .sent)
     case assistant(id: UUID = UUID(), text: String)
@@ -128,8 +130,11 @@ final class PinchStore: ObservableObject {
         return min(1, max(0, Double(contextUsed) / Double(contextWindow)))
     }
 
-    // Conversation.
-    @Published var transcript: [TranscriptItem] = []
+    // Conversation. Persisted per focused agent (debounced) so the feed survives a relaunch and
+    // reappears on reconnect instead of showing an empty screen while the session is still alive.
+    @Published var transcript: [TranscriptItem] = [] {
+        didSet { scheduleTranscriptPersist() }
+    }
     @Published var thinkingActive = false          // subtle "extended thinking" indicator
     @Published var turnStartedAt: Date?            // when the current thinking/tool turn began (live timer)
 
@@ -178,6 +183,19 @@ final class PinchStore: ObservableObject {
     @Published var agents: [AgentSlot] = [AgentSlot(id: "default", label: "Agent 1")]
     @Published var focusedAgentId = "default"
     private var transcriptStash: [String: [TranscriptItem]] = [:]
+    /// Trailing-edge debounce for writing the focused agent's feed to disk. The transcript mutates
+    /// rapidly while a reply streams in, so we coalesce and persist ~0.6s after it settles.
+    private var transcriptPersistTask: Task<Void, Never>?
+    /// Cap on how many of the most-recent feed items we keep on disk per agent — bounds storage and
+    /// restore cost. The live in-memory transcript is never capped; this only limits what survives a
+    /// relaunch.
+    private let maxPersistedTranscript = 200
+
+    // Drives the upper-left hub SHEET (folder + agent switcher). Lives on the store — not as local
+    // @State in RootView — so a deep child (AgentListView) can close the ENTIRE sheet in one step
+    // when an agent is focused, instead of only popping its own NavigationLink push back to the hub
+    // list (which left the user inside the sheet, needing a second dismiss to reach the conversation).
+    @Published var hubPresented = false
 
     // Sub-systems (exposed so views can bind: mic state, speaking pulse, etc.).
     let speaker = Speaker()
@@ -194,11 +212,12 @@ final class PinchStore: ObservableObject {
     // at most once even if its event is somehow re-delivered. Cleared with the transcript.
     private var spokenAssistantIds: Set<UUID> = []
 
-    // True once we've buzzed a real reply in the CURRENT turn (Haptics.response). Lets the
-    // end-of-turn handler skip its own success() buzz when a reply already announced itself,
-    // so a normal Q&A turn gives ONE clear "answered" buzz instead of two stacked taps. Reset
-    // at each turn start.
-    private var didBuzzReplyThisTurn = false
+    // True once a real assistant reply has landed in the CURRENT turn. We no longer buzz per
+    // message — the haptic is deferred to turnComplete so you get ONE "done" buzz when the agent
+    // stops talking, not a ding on every chunk it streams. This flag just tells that end-of-turn
+    // handler whether to use the prominent "answered" buzz or the quieter success tap. Reset at
+    // each turn start.
+    private var repliedThisTurn = false
 
     // Settings (mirrored from @AppStorage by the views via configure()).
     private var serverURLString = ""
@@ -222,6 +241,9 @@ final class PinchStore: ObservableObject {
         static let mode = "pinch.mode"
         static let agents = "pinch.agents"
         static let focusedAgent = "pinch.focusedAgent"
+        /// Per-agent feed history. Keyed by slot id so each agent restores its OWN conversation,
+        /// matching how WSClient keys the resume id + poll cursor per slot.
+        static func transcript(_ slot: String) -> String { "pinch.transcript.\(slot)" }
     }
 
     /// Selected API model id. Persisted; pushed to the backend on change when connected.
@@ -303,6 +325,10 @@ final class PinchStore: ObservableObject {
         if !agents.contains(where: { $0.id == focusedAgentId }) {
             focusedAgentId = agents.first?.id ?? "default"
         }
+        // Restore the focused agent's saved feed so a relaunch shows its prior messages immediately.
+        // The transport resumes from its saved poll cursor, so only genuinely-new events append on
+        // top — no replay through the speak path, no duplicate bubbles.
+        transcript = loadTranscript(slot: focusedAgentId)
     }
 
     /// Persist the agent registry + which one is focused, so the running set survives relaunch.
@@ -310,6 +336,42 @@ final class PinchStore: ObservableObject {
         let d = UserDefaults.standard
         if let data = try? JSONEncoder().encode(agents) { d.set(data, forKey: SettingsKey.agents) }
         d.set(focusedAgentId, forKey: SettingsKey.focusedAgent)
+    }
+
+    // MARK: - Feed history persistence
+
+    /// Write a slot's feed to disk (last `maxPersistedTranscript` items). Synchronous — call at
+    /// agent-switch boundaries to flush the OUTGOING slot before the focus changes.
+    private func persistTranscript(_ items: [TranscriptItem], slot: String) {
+        let capped = items.count > maxPersistedTranscript ? Array(items.suffix(maxPersistedTranscript)) : items
+        if let data = try? JSONEncoder().encode(capped) {
+            UserDefaults.standard.set(data, forKey: SettingsKey.transcript(slot))
+        }
+    }
+
+    /// Load a slot's saved feed (empty if none / undecodable). Decode failures are non-fatal — the
+    /// feed just starts empty, exactly as before this feature existed.
+    private func loadTranscript(slot: String) -> [TranscriptItem] {
+        guard let data = UserDefaults.standard.data(forKey: SettingsKey.transcript(slot)),
+              let items = try? JSONDecoder().decode([TranscriptItem].self, from: data)
+        else { return [] }
+        return items
+    }
+
+    /// Drop a slot's saved feed (agent removed).
+    private func dropTranscript(slot: String) {
+        UserDefaults.standard.removeObject(forKey: SettingsKey.transcript(slot))
+    }
+
+    /// Debounced persist of the CURRENTLY focused agent's feed. Reads the latest transcript + focus
+    /// at fire time, so a steady stream of appends collapses into one write once it settles.
+    private func scheduleTranscriptPersist() {
+        transcriptPersistTask?.cancel()
+        transcriptPersistTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.persistTranscript(self.transcript, slot: self.focusedAgentId)
+        }
     }
 
     /// Rename the focused agent's row to the project it's currently scoped to (the folder hint, or
@@ -634,6 +696,7 @@ final class PinchStore: ObservableObject {
     /// screen. Its backend session is created lazily by the transport's next /api/session.
     func createAgent() {
         transcriptStash[focusedAgentId] = transcript
+        persistTranscript(transcript, slot: focusedAgentId)   // flush outgoing slot before focus moves
         let id = UUID().uuidString
         agents.append(AgentSlot(id: id, label: "Agent \(agents.count + 1)"))
         focusedAgentId = id
@@ -648,9 +711,12 @@ final class PinchStore: ObservableObject {
     func focusAgent(_ id: String) {
         guard id != focusedAgentId else { return }
         transcriptStash[focusedAgentId] = transcript
+        persistTranscript(transcript, slot: focusedAgentId)   // flush outgoing slot before focus moves
         focusedAgentId = id
         persistAgents()
-        prepareForAgentSwitch(restoring: transcriptStash[id])
+        // Prefer the in-memory stash (this session); fall back to disk so an agent focused for the
+        // first time since launch still restores its saved conversation rather than a blank screen.
+        prepareForAgentSwitch(restoring: transcriptStash[id] ?? loadTranscript(slot: id))
         ws?.switchAgent(slot: id, resume: true)
         Haptics.click()
     }
@@ -666,6 +732,7 @@ final class PinchStore: ObservableObject {
         }
         agents.removeAll { $0.id == id }
         transcriptStash[id] = nil
+        dropTranscript(slot: id)   // forget the removed agent's saved feed too
         persistAgents()
         ws?.endAgent(slot: id)
         Haptics.click()
@@ -730,7 +797,7 @@ final class PinchStore: ObservableObject {
             // Start the turn timer the moment work begins; clear it the moment we go idle.
             if (state == .thinking || state == .running_tool), turnStartedAt == nil {
                 turnStartedAt = Date()
-                didBuzzReplyThisTurn = false   // new turn — arm the reply buzz again
+                repliedThisTurn = false        // new turn — reset the reply flag
             } else if state == .idle {
                 turnStartedAt = nil
             }
@@ -744,13 +811,13 @@ final class PinchStore: ObservableObject {
             // Handle each assistant message AT MOST ONCE. The transport already dedupes events
             // by index (so a re-poll can't re-deliver this), but we ALSO guard here by the
             // bubble's id so nothing — replay, resume replay, or a backend double-send — can
-            // double-fire. Buzz on EVERY reply (Haptics.response) independent of TTS, so you
-            // feel that Claude answered even with audio readback off (the common case); the
+            // double-fire. We do NOT buzz per message: a single turn can emit several text chunks
+            // (the bits between tool calls), and a ding on each one is noise. We just mark that a
+            // reply landed and speak it; the one "done" haptic fires later, at turnComplete. The
             // Speaker handles AUDIO only and no-ops when ttsEnabled is false.
             if !spokenAssistantIds.contains(bubbleId) {
                 spokenAssistantIds.insert(bubbleId)
-                Haptics.response()
-                didBuzzReplyThisTurn = true
+                repliedThisTurn = true     // remember a reply landed; the buzz fires at turnComplete
                 speaker.speak(text)        // speak aloud (only if enabled + a route exists)
             }
 
@@ -778,9 +845,12 @@ final class PinchStore: ObservableObject {
             streamingAssistantIndex = nil
             thinkingActive = false
             turnStartedAt = nil
-            // A clean turn that already buzzed its reply doesn't need a second tap; only buzz
-            // success here for turns that ended WITHOUT a reply (e.g. tool-only work).
-            if stopReason == .end_turn, !didBuzzReplyThisTurn { Haptics.success() }
+            // ONE buzz when the turn is fully done — the agent has stopped thinking and sending.
+            // A turn that produced a reply gets the prominent "answered" buzz; a silent/tool-only
+            // turn gets the quieter success tap. This is the only place a normal turn buzzes.
+            if stopReason == .end_turn {
+                if repliedThisTurn { Haptics.response() } else { Haptics.success() }
+            }
             if stopReason == .error { Haptics.failure() }
 
         case let .notice(level, message):
@@ -864,5 +934,8 @@ final class PinchStore: ObservableObject {
         transcript.removeAll()
         streamingAssistantIndex = nil
         spokenAssistantIds.removeAll()
+        // Wipe the saved feed for this agent now (don't wait on the debounce) so a clear can't be
+        // undone by a relaunch restoring stale history.
+        persistTranscript([], slot: focusedAgentId)
     }
 }
