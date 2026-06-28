@@ -10,36 +10,70 @@ import SwiftUI
 struct TranscriptList: View {
     @EnvironmentObject private var store: PinchStore
 
+    /// Whether the feed is tracking the bottom. Starts true; scrolling UP breaks away so you can
+    /// read backscroll while the agent keeps working and streaming — nothing yanks you down —
+    /// and scrolling back to the floor (or sending a new message) re-engages following.
+    @State private var following = true
+
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    if store.transcript.isEmpty && !showThinking {
-                        EmptyConversation()
-                            .padding(.top, 60)
+        // Outer reader gives us the viewport height so we can tell "content bottom is at the
+        // floor" (following) from "scrolled up to read".
+        GeometryReader { outer in
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        if store.transcript.isEmpty && !showThinking {
+                            EmptyConversation()
+                                .padding(.top, 60)
+                        }
+                        ForEach(store.transcript) { item in
+                            TranscriptRow(item: item)
+                                .id(item.id)
+                        }
+                        if showThinking {
+                            ThinkingIndicator(startedAt: store.turnStartedAt, state: store.agentState)
+                                .id("thinking")
+                        }
+                        Color.clear.frame(height: 1).id(bottomAnchor)
                     }
-                    ForEach(store.transcript) { item in
-                        TranscriptRow(item: item)
-                            .id(item.id)
-                    }
-                    if showThinking {
-                        ThinkingIndicator(startedAt: store.turnStartedAt, state: store.agentState)
-                            .id("thinking")
-                    }
-                    Color.clear.frame(height: 1).id(bottomAnchor)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    // iOS 17 has no .onScrollGeometryChange, so detect "near the floor" with a
+                    // background GeometryReader: the content's bottom (maxY in the scroll's own
+                    // coordinate space) equals the viewport height when pinned to the bottom, and
+                    // grows larger the further up you scroll.
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: NearBottomKey.self,
+                                value: geo.frame(in: .named(scrollSpace)).maxY <= outer.size.height + bottomBand
+                            )
+                        }
+                    )
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
+                .coordinateSpace(.named(scrollSpace))
+                .scrollDismissesKeyboard(.interactively)
+                .onPreferenceChange(NearBottomKey.self) { nearBottom in following = nearBottom }
+                .onChange(of: store.transcript.count) { old, new in
+                    // A new USER message is an explicit "take me to the bottom" — re-engage even
+                    // if we'd scrolled up. Agent-driven growth respects the follow state.
+                    if new > old, let last = store.transcript.last, case .user = last { following = true }
+                    if following { scrollToBottom(proxy) }
+                }
+                .onChange(of: lastAssistantText) { _, _ in if following { scrollToBottom(proxy) } }
+                .onChange(of: store.thinkingActive) { _, _ in if following { scrollToBottom(proxy) } }
+                .onAppear {
+                    following = true
+                    scrollToBottom(proxy, animated: false)
+                }
             }
-            .scrollDismissesKeyboard(.interactively)
-            .onChange(of: store.transcript.count) { _, _ in scrollToBottom(proxy) }
-            .onChange(of: lastAssistantText) { _, _ in scrollToBottom(proxy) }
-            .onChange(of: store.thinkingActive) { _, _ in scrollToBottom(proxy) }
-            .onAppear { scrollToBottom(proxy, animated: false) }
         }
     }
 
     private let bottomAnchor = "BOTTOM_ANCHOR"
+    private let scrollSpace = "TRANSCRIPT_SCROLL"
+    /// How close to the content's bottom (points) still counts as "at the floor".
+    private let bottomBand: CGFloat = 40
 
     private var showThinking: Bool {
         store.thinkingActive || store.agentState == .thinking || store.agentState == .running_tool
@@ -60,6 +94,13 @@ struct TranscriptList: View {
             proxy.scrollTo(bottomAnchor, anchor: .bottom)
         }
     }
+}
+
+/// True while the content's bottom sits at (or within the band of) the viewport floor. Carried out
+/// of the scroll content by a background GeometryReader so the follow-to-bottom gate can read it.
+private struct NearBottomKey: PreferenceKey {
+    static let defaultValue = true
+    static func reduce(value: inout Bool, nextValue: () -> Bool) { value = nextValue() }
 }
 
 // MARK: - Rows

@@ -12,7 +12,6 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var store: PinchStore
     @State private var showSettings = false
-    @State private var showHub = false
 
     var body: some View {
         // PORTFOLIO: PINCH_DEMO can stage a deep screen (the agent switcher, settings, the mode
@@ -57,7 +56,7 @@ struct RootView: View {
                         Button {
                             Haptics.click()
                             store.listProjects()   // prefetch so the hub's folder picker is warm
-                            showHub = true
+                            store.hubPresented = true
                         } label: {
                             Image(systemName: "folder")
                                 .overlay(alignment: .topTrailing) {
@@ -88,7 +87,7 @@ struct RootView: View {
                 }
             }
             .sheet(isPresented: $showSettings) { SettingsView() }
-            .sheet(isPresented: $showHub) { HubView() }
+            .sheet(isPresented: $store.hubPresented) { HubView() }
         }
         // Orange is applied per-control (send, mic, bubbles), NOT globally — a global tint
         // turns watchOS 26's toolbar buttons into solid orange blobs. Keep nav icons neutral.

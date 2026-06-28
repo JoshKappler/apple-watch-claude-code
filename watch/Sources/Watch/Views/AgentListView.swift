@@ -11,7 +11,6 @@ import SwiftUI
 
 struct AgentListView: View {
     @EnvironmentObject private var store: PinchStore
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         // Split into typed helpers below: a single monolithic List{ForEach{Section{ForEach…}}} mixed
@@ -49,7 +48,9 @@ struct AgentListView: View {
             isFocused: row.id == store.focusedAgentId,
             focus: {
                 store.focusAgent(row.id)
-                dismiss()
+                // Close the ENTIRE hub sheet (not just pop back to the hub list) so the user lands
+                // straight on the focused agent's conversation — one tap, no second dismiss.
+                store.hubPresented = false
             }
         )
         .swipeActions(edge: .trailing) {
@@ -68,7 +69,7 @@ struct AgentListView: View {
     private var newAgentButton: some View {
         Button {
             store.createAgent()
-            dismiss()
+            store.hubPresented = false   // close the whole hub sheet → land on the new agent's screen
         } label: {
             Label("New agent", systemImage: "plus.circle.fill")
                 .font(.system(size: 15, weight: .medium))
