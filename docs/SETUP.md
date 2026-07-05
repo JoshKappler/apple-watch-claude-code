@@ -133,9 +133,10 @@ cloudflared, else ngrok; force with `TUNNEL=ngrok` / `TUNNEL=cloudflared`).
 
 ### 5. The watch app
 
-The Xcode project is generated from `watch/project.yml` (it's gitignored, not
-committed). The committed `project.yml` has the original author's Apple Team baked
-in, so **change it to yours before generating** or signing fails.
+You'll need **Xcode 16+** and **XcodeGen** (`brew install xcodegen`) — the Xcode
+project is generated from `watch/project.yml` (it's gitignored, not committed).
+The committed `project.yml` has the original author's Apple Team baked in, so
+**change it to yours before generating** or signing fails.
 
 ```yaml
 # watch/project.yml

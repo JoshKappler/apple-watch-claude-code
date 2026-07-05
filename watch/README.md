@@ -8,7 +8,7 @@ response read aloud, approve/decline edits by tap, full autonomy incl. a "danger
 permissions" mode, over cellular.
 
 This directory has no build artifacts checked in — the Xcode project is **generated** from
-`project.yml` with [XcodeGen](https://github.com/yonik/XcodeGen). There is no npm here.
+`project.yml` with [XcodeGen](https://github.com/yonaskolb/XcodeGen). There is no npm here.
 
 ## Prerequisites
 

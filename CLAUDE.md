@@ -11,7 +11,7 @@ Agent SDK against the live repos under `PINCH_PROJECT_ROOTS` (e.g.
 client. The cloud mode in `infra/cloud` is a different thing — it only sees
 git-pushed code and is not remote control of this Mac.
 
-The repo is **public** (`github.com/JoshKappler/apple-watch-claude-code-`).
+The repo is **public** (`github.com/JoshKappler/apple-watch-claude-code`).
 
 ## Layout
 

@@ -82,7 +82,7 @@ ngrok edge   ──►   ngrok agent   ──►   backend on localhost:8787
 
 **For the watch app:**
 - **Xcode 16+** (ships the watchOS 11 SDK)
-- **[XcodeGen](https://github.com/yonik/XcodeGen)** — `brew install xcodegen`
+- **[XcodeGen](https://github.com/yonaskolb/XcodeGen)** — `brew install xcodegen`
 - An **Apple Developer account** (free tier is fine for personal on-device installs)
 - An **Apple Watch on watchOS 11+**. Any watchOS 11 watch works; the hardware
   double-tap "Send" gesture needs **Series 9 / Ultra 2 or later**. Cellular is
@@ -100,7 +100,7 @@ There are three parts: **backend**, **tunnel**, **watch**. Do them in order.
 ### Part 1 — Backend on your Mac
 
 ```bash
-git clone https://github.com/JoshKappler/apple-watch-claude-code-.git pinch
+git clone https://github.com/JoshKappler/apple-watch-claude-code.git pinch
 cd pinch
 ./setup.sh          # creates backend/.env, generates a PINCH_TOKEN, and
                     # creates watch/Sources/Shared/Secrets.swift with the token filled in
